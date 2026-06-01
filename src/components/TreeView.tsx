@@ -5,9 +5,9 @@ interface Props {
   node: TreeNode
   selectedPath: string | null
   onSelect: (path: string) => void
-  /** 検索中は全ディレクトリを開いて見せる */
+  /** While searching, expand every directory so all matches are visible */
   forceExpand: boolean
-  /** ルート自身は描画せず子だけ描画する（最上段のフォルダ名はヘッダに出すため） */
+  /** Don't render the root itself, only its children (the top-level folder name is shown in the header) */
   depth?: number
 }
 
@@ -31,7 +31,7 @@ export function TreeView({ node, selectedPath, onSelect, forceExpand, depth = 0 
 function TreeItem({ node, selectedPath, onSelect, forceExpand, depth = 0 }: Props) {
   const [open, setOpen] = useState(depth < 1)
 
-  // 検索が始まったら強制展開。
+  // Force-expand once a search begins.
   useEffect(() => {
     if (forceExpand) setOpen(true)
   }, [forceExpand])

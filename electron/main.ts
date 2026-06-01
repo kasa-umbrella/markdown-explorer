@@ -1,5 +1,5 @@
-// メインは ESM(.js) で出力される。Electron の ESM ローダーは electron 組み込みの
-// 名前付き export を解決できないため、createRequire で CJS require して API を取る。
+// The main process is emitted as ESM (.js). Electron's ESM loader can't resolve the
+// named exports of the built-in electron module, so we use createRequire to CJS-require the API.
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -9,18 +9,18 @@ const require = createRequire(import.meta.url)
 const { app, BrowserWindow, protocol, net, session } =
   require('electron') as typeof ElectronModule
 
-// dist-electron/main.js から見た各ルート
+// Roots as seen from dist-electron/main.js
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = path.join(dirname, '..')
 const RENDERER_DIST = path.join(APP_ROOT, 'dist')
 
-// vite-plugin-electron が dev 時に注入する開発サーバ URL。本番では undefined。
+// Dev server URL injected by vite-plugin-electron during dev. undefined in production.
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
-// 本番は file:// ではなく app:// で配信する。
-// standard + secure にすることで:
-//   - secure context が成立し showDirectoryPicker が使える
-//   - origin が安定し idb-keyval に保存したフォルダハンドルが復元できる
+// In production we serve over app:// instead of file://.
+// Marking it standard + secure means:
+//   - a secure context is established, so showDirectoryPicker is available
+//   - the origin is stable, so folder handles saved in idb-keyval can be restored
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app',
@@ -42,7 +42,7 @@ function createWindow(): void {
   })
 
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    console.error(`[main] ロード失敗: ${code} ${desc} (${url})`)
+    console.error(`[main] load failed: ${code} ${desc} (${url})`)
   })
 
   if (DEV_SERVER_URL) {
@@ -54,18 +54,18 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // 前回フォルダの「無クリック復元」を成立させる肝。
-  // ブラウザは File System Access の許可をセッション間で保持しないため、
-  // 起動毎に handle.queryPermission が 'prompt' を返してしまう。
-  // レンダラは app:// から読む自前の信頼済みコンテンツなので、
-  // 'fileSystem' 権限だけ自動許可して再プロンプトを消す。
+  // The key to making "no-click restore" of the last folder work.
+  // Browsers don't persist File System Access permissions across sessions,
+  // so handle.queryPermission returns 'prompt' on every launch.
+  // Since the renderer is our own trusted content loaded from app://,
+  // we auto-grant only the 'fileSystem' permission to suppress the re-prompt.
   const ses = session.defaultSession
   ses.setPermissionCheckHandler((_wc, permission) => permission === 'fileSystem')
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === 'fileSystem')
   })
 
-  // app://local/<path> を dist/<path> のファイルに対応づける
+  // Map app://local/<path> to the file at dist/<path>
   protocol.handle('app', (request) => {
     const { pathname } = new URL(request.url)
     const relative = decodeURIComponent(pathname).replace(/^\/+/, '') || 'index.html'
@@ -81,6 +81,6 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  // macOS は明示的に Cmd+Q するまで残すのが慣習
+  // On macOS, the convention is to keep the app alive until the user explicitly hits Cmd+Q
   if (process.platform !== 'darwin') app.quit()
 })

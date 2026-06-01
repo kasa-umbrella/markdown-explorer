@@ -1,8 +1,8 @@
 import type { TreeNode } from '../types'
 
 /**
- * ファイル名でツリーを絞り込む。マッチするファイルと、それを含む祖先ディレクトリだけを残す。
- * query が空なら元のツリーをそのまま返す。
+ * Filter the tree by file name. Keeps only matching files and the ancestor directories that contain them.
+ * If query is empty, returns the original tree unchanged.
  */
 export function filterTree(node: TreeNode, query: string): TreeNode | null {
   const q = query.trim().toLowerCase()

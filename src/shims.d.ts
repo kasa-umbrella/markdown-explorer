@@ -1,4 +1,4 @@
-// 型定義を持たない markdown-it プラグインの最小宣言。
+// Minimal declarations for markdown-it plugins that ship without type definitions.
 declare module 'markdown-it-task-lists' {
   import type { PluginWithOptions } from 'markdown-it'
   const plugin: PluginWithOptions<{ enabled?: boolean; label?: boolean; labelAfter?: boolean }>

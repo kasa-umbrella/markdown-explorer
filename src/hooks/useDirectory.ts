@@ -13,7 +13,7 @@ type Status = 'idle' | 'restoring' | 'need-permission' | 'scanning' | 'ready' | 
 
 interface State {
   status: Status
-  /** ルートフォルダ名（復元時に権限待ちでも名前は出したい） */
+  /** Root folder name (we want to show it even while waiting for permission during restore) */
   rootName: string | null
   scan: ScanResult | null
   error: string | null
@@ -28,7 +28,7 @@ export function useDirectory() {
     scan: null,
     error: null,
   })
-  /** 権限待ちのとき、ユーザー操作で再開するために保持するハンドル */
+  /** Handle held while awaiting permission, so a user action can resume from it */
   const [pending, setPending] = useState<FileSystemDirectoryHandle | null>(null)
 
   const scanInto = useCallback(async (handle: FileSystemDirectoryHandle) => {
@@ -41,10 +41,10 @@ export function useDirectory() {
     }
   }, [])
 
-  // 初回マウント時：保存済みハンドルを復元し、権限があればそのまま走査。
+  // On first mount: restore the saved handle and, if permission is granted, scan right away.
   useEffect(() => {
     if (!SUPPORTED) {
-      setState({ status: 'error', rootName: null, scan: null, error: 'このブラウザは File System Access API 未対応' })
+      setState({ status: 'error', rootName: null, scan: null, error: 'このブラウザは File System Access API に対応してないにゃ' })
       return
     }
     let cancelled = false
@@ -56,7 +56,7 @@ export function useDirectory() {
         setState((s) => ({ ...s, status: 'idle' }))
         return
       }
-      // prompt:false（ユーザー操作起点ではないので許可ダイアログは出せない）
+      // prompt:false (not triggered by a user action, so we can't show the permission dialog)
       const ok = await ensureReadPermission(handle, false)
       if (cancelled) return
       if (ok) {
@@ -71,20 +71,20 @@ export function useDirectory() {
     }
   }, [scanInto])
 
-  /** フォルダを新規に選ぶ。 */
+  /** Choose a new folder. */
   const choose = useCallback(async () => {
     try {
       const handle = await pickDirectory()
       setPending(null)
       await scanInto(handle)
     } catch (e) {
-      // ユーザーがキャンセルした場合は静かに戻す
+      // If the user cancelled, just return quietly
       if (e instanceof DOMException && e.name === 'AbortError') return
       setState({ status: 'error', rootName: null, scan: null, error: String(e) })
     }
   }, [scanInto])
 
-  /** 権限待ちのハンドルに対し、ユーザー操作で許可を要求して走査。 */
+  /** For a handle awaiting permission, request access via a user action and then scan. */
   const grant = useCallback(async () => {
     if (!pending) return
     const ok = await ensureReadPermission(pending, true)
@@ -94,14 +94,14 @@ export function useDirectory() {
     }
   }, [pending])
 
-  /** 記憶したフォルダを忘れて最初の状態へ。 */
+  /** Forget the remembered folder and return to the initial state. */
   const reset = useCallback(async () => {
     await forgetDirectory()
     setPending(null)
     setState({ status: 'idle', rootName: null, scan: null, error: null })
   }, [])
 
-  /** 現在のフォルダを再走査。 */
+  /** Rescan the current folder. */
   const rescan = useCallback(async () => {
     const handle = await restoreDirectory()
     if (handle && (await ensureReadPermission(handle, false))) {

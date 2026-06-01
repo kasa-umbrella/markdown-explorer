@@ -4,10 +4,10 @@ import { readBlobUrl, readTextFile } from '../lib/fsAccess'
 import { isExternalUrl, isMarkdownLink, resolveRelative } from '../lib/paths'
 
 interface Props {
-  /** 現在表示中の .md のパス（ルート相対）。null なら未選択。 */
+  /** Path of the .md currently shown (relative to root). null means nothing selected. */
   path: string | null
   files: Map<string, FileSystemFileHandle>
-  /** md リンククリック時：別の .md へ遷移する */
+  /** On clicking a md link: navigate to another .md */
   onNavigate: (path: string) => void
 }
 
@@ -16,7 +16,7 @@ export function Preview({ path, files, onNavigate }: Props) {
   const [error, setError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // 選択ファイルが変わったら読み込んでレンダリング。
+  // When the selected file changes, load and render it.
   useEffect(() => {
     if (!path) {
       setHtml('')
@@ -39,7 +39,7 @@ export function Preview({ path, files, onNavigate }: Props) {
     }
   }, [path, files])
 
-  // レンダリング後：画像の相対パスを Blob URL に差し替える。
+  // After rendering: swap image relative paths for Blob URLs.
   useEffect(() => {
     const el = containerRef.current
     if (!el || !path) return
@@ -58,21 +58,21 @@ export function Preview({ path, files, onNavigate }: Props) {
           created.push(url)
           img.setAttribute('src', url)
         } else {
-          img.setAttribute('alt', `(画像が見つからない: ${raw})`)
+          img.setAttribute('alt', `（画像が迷子にゃ：${raw}）`)
         }
       })()
     }
 
-    // 横に大きいテーブルは、それ単体で横スクロールできるよう枠で包む。
+    // Wrap wide tables in a frame so each can scroll horizontally on its own.
     for (const table of Array.from(el.querySelectorAll('table'))) {
-      if (table.parentElement?.classList.contains('table-wrap')) continue // 二重ラップ防止
+      if (table.parentElement?.classList.contains('table-wrap')) continue // avoid double-wrapping
       const wrap = document.createElement('div')
       wrap.className = 'table-wrap'
       table.replaceWith(wrap)
       wrap.appendChild(table)
     }
 
-    // 外部リンクは新規タブで開くよう印を付ける。
+    // Mark external links to open in a new tab.
     for (const a of Array.from(el.querySelectorAll('a'))) {
       const href = a.getAttribute('href') ?? ''
       if (isExternalUrl(href)) {
@@ -87,7 +87,7 @@ export function Preview({ path, files, onNavigate }: Props) {
     }
   }, [html, path, files])
 
-  // md 内リンクのクリックを横取りして、ビューア内遷移へ。
+  // Intercept clicks on links inside the md and turn them into in-viewer navigation.
   useEffect(() => {
     const el = containerRef.current
     if (!el || !path) return
@@ -100,12 +100,12 @@ export function Preview({ path, files, onNavigate }: Props) {
         e.preventDefault()
         onNavigate(resolveRelative(path, href))
       } else if (href.startsWith('#')) {
-        // 同一ページ内アンカー：そのままスクロール
+        // Same-page anchor: just scroll to it
         e.preventDefault()
         const id = decodeURIComponent(href.slice(1))
         el.querySelector(`#${CSS.escape(id)}`)?.scrollIntoView({ behavior: 'smooth' })
       } else {
-        // .md でないローカル参照（PDF等）は今は無視
+        // Non-.md local references (PDFs, etc.) are ignored for now
         e.preventDefault()
       }
     }
@@ -113,7 +113,7 @@ export function Preview({ path, files, onNavigate }: Props) {
     return () => el.removeEventListener('click', onClick)
   }, [html, path, onNavigate])
 
-  // 表示が変わったら一番上へスクロール。
+  // Scroll back to the top whenever the view changes.
   useEffect(() => {
     containerRef.current?.scrollTo({ top: 0 })
   }, [path])
@@ -121,14 +121,14 @@ export function Preview({ path, files, onNavigate }: Props) {
   if (!path) {
     return (
       <div className="preview empty">
-        <p>左から .md を選ぶ、と。……ここに、出る、よ。</p>
+        <p>左で .md を選んでみてにゃん。ここに出てくるにゃん。</p>
       </div>
     )
   }
   if (error) {
     return (
       <div className="preview error">
-        <p>読み込めなかった。</p>
+        <p>このファイル、読めなかったにゃ</p>
         <pre>{error}</pre>
       </div>
     )

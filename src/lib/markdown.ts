@@ -4,11 +4,11 @@ import anchor from 'markdown-it-anchor'
 import hljs from 'highlight.js'
 
 /**
- * GFM 相当の markdown-it インスタンス。
- * - 表・打ち消し線などは markdown-it 標準で有効
- * - タスクリストはプラグインで追加
- * - 見出しに id（アンカー）付与
- * - コードブロックは highlight.js
+ * A markdown-it instance roughly equivalent to GFM.
+ * - Tables, strikethrough, etc. are enabled out of the box in markdown-it
+ * - Task lists are added via a plugin
+ * - Headings get id anchors
+ * - Code blocks use highlight.js
  */
 export const md: MarkdownIt = new MarkdownIt({
   html: true,
@@ -19,7 +19,7 @@ export const md: MarkdownIt = new MarkdownIt({
       try {
         return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
       } catch {
-        /* 失敗時は素通し */
+        /* on failure, fall through */
       }
     }
     return md.utils.escapeHtml(code)
@@ -28,7 +28,7 @@ export const md: MarkdownIt = new MarkdownIt({
   .use(taskLists, { label: true })
   .use(anchor, { permalink: false })
 
-/** Markdown 文字列を HTML へ。 */
+/** Convert a Markdown string to HTML. */
 export function renderMarkdown(src: string): string {
   return md.render(src)
 }

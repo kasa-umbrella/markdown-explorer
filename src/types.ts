@@ -1,22 +1,22 @@
-/** ツリー上の1ノード。ディレクトリ、または .md ファイル。 */
+/** A single node in the tree: a directory or an .md file. */
 export interface TreeNode {
-  /** ルートからの相対パス。例: "docs/guide.md" */
+  /** Path relative to the root. e.g. "docs/guide.md" */
   path: string
-  /** 表示名（パスの末尾） */
+  /** Display name (the last segment of the path) */
   name: string
   kind: 'dir' | 'file'
-  /** kind === 'dir' のときのみ。名前順に並んだ子ノード。 */
+  /** Only when kind === 'dir'. Child nodes sorted by name. */
   children?: TreeNode[]
-  /** kind === 'dir' のときのみ。直下に .md を持つフォルダなら true。 */
+  /** Only when kind === 'dir'. True if the folder directly contains .md files. */
   hasMarkdown?: boolean
 }
 
-/** フォルダ走査の結果。 */
+/** Result of scanning a folder. */
 export interface ScanResult {
-  /** サイドバー用のツリー（ディレクトリと .md のみ） */
+  /** Tree for the sidebar (directories and .md only) */
   tree: TreeNode
-  /** 全ファイルのハンドル。キーはルートからの相対パス。画像など .md 以外も含む。 */
+  /** Handles for all files. Keyed by path relative to the root. Includes non-.md files such as images. */
   files: Map<string, FileSystemFileHandle>
-  /** 走査でヒットした .md の総数 */
+  /** Total number of .md files found during the scan */
   markdownCount: number
 }

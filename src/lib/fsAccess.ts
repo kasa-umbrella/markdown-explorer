@@ -3,38 +3,38 @@ import type { ScanResult, TreeNode } from '../types'
 
 const HANDLE_KEY = 'rootDirHandle'
 
-/** File System Access API がこのブラウザで使えるか。 */
+/** Whether the File System Access API is available in this browser. */
 export function isFsAccessSupported(): boolean {
   return typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function'
 }
 
-/** フォルダ選択ダイアログを開き、選ばれたハンドルを IndexedDB に保存して返す。 */
+/** Open the folder picker, save the chosen handle to IndexedDB, and return it. */
 export async function pickDirectory(): Promise<FileSystemDirectoryHandle> {
   const handle = await window.showDirectoryPicker({ mode: 'read' })
   await set(HANDLE_KEY, handle)
   return handle
 }
 
-/** 前回保存したフォルダのハンドルを復元する。無ければ null。 */
+/** Restore the previously saved folder handle. Returns null if none. */
 export async function restoreDirectory(): Promise<FileSystemDirectoryHandle | null> {
   const handle = await get<FileSystemDirectoryHandle>(HANDLE_KEY)
   return handle ?? null
 }
 
-/** 保存済みハンドルを破棄する。 */
+/** Discard the saved handle. */
 export async function forgetDirectory(): Promise<void> {
   await del(HANDLE_KEY)
 }
 
 /**
- * ハンドルの読み取り権限を確認・要求する。
- * @param prompt true ならユーザーへの許可ダイアログを出してよい（クリック等のユーザー操作起点で呼ぶこと）。
+ * Check and, if needed, request read permission for a handle.
+ * @param prompt If true, the permission dialog may be shown to the user (call this from a user action such as a click).
  */
 export async function ensureReadPermission(
   handle: FileSystemDirectoryHandle,
   prompt: boolean,
 ): Promise<boolean> {
-  // 型定義に無いブラウザ拡張メソッドのため as 経由で叩く。
+  // These are browser-extension methods missing from the type defs, so we call them via an as cast.
   const h = handle as unknown as {
     queryPermission(d: { mode: 'read' }): Promise<PermissionState>
     requestPermission(d: { mode: 'read' }): Promise<PermissionState>
@@ -46,7 +46,7 @@ export async function ensureReadPermission(
 
 const MD_EXT = /\.(md|markdown|mdown|mkd)$/i
 
-/** ディレクトリを再帰走査し、ツリーと全ファイルのハンドルマップを作る。 */
+/** Recursively scan a directory, building the tree and a handle map of all files. */
 export async function scanDirectory(root: FileSystemDirectoryHandle): Promise<ScanResult> {
   const files = new Map<string, FileSystemFileHandle>()
   let markdownCount = 0
@@ -55,16 +55,16 @@ export async function scanDirectory(root: FileSystemDirectoryHandle): Promise<Sc
     const dirs: TreeNode[] = []
     const mdFiles: TreeNode[] = []
 
-    // for await...of で AsyncIterable のエントリを列挙する。
+    // Enumerate the AsyncIterable's entries with for await...of.
     for await (const [name, entry] of dir as unknown as AsyncIterable<[string, FileSystemHandle]>) {
-      if (name.startsWith('.')) continue // ドットファイル/フォルダはスキップ
+      if (name.startsWith('.')) continue // skip dotfiles/dot-folders
       const path = prefix ? `${prefix}/${name}` : name
 
       if (entry.kind === 'directory') {
         const children = await walk(entry as FileSystemDirectoryHandle, path)
-        // .md を1つも含まないディレクトリはツリーから省く
+        // Omit directories that contain no .md at all from the tree
         if (children.length > 0) {
-          // 直下（子ノード）に .md ファイルがあるフォルダはハイライト対象
+          // Folders with .md files directly inside (as child nodes) are highlighted
           const hasMarkdown = children.some((c) => c.kind === 'file')
           dirs.push({ path, name, kind: 'dir', children, hasMarkdown })
         }
@@ -82,7 +82,7 @@ export async function scanDirectory(root: FileSystemDirectoryHandle): Promise<Sc
       a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
     dirs.sort(byName)
     mdFiles.sort(byName)
-    // ディレクトリを先、ファイルを後に並べる
+    // Order directories first, then files
     return [...dirs, ...mdFiles]
   }
 
@@ -91,18 +91,18 @@ export async function scanDirectory(root: FileSystemDirectoryHandle): Promise<Sc
   return { tree, files, markdownCount }
 }
 
-/** マップから1ファイルを読み、テキストとして返す。 */
+/** Read one file from the map and return it as text. */
 export async function readTextFile(
   files: Map<string, FileSystemFileHandle>,
   path: string,
 ): Promise<string> {
   const handle = files.get(path)
-  if (!handle) throw new Error(`ファイルが見つからない: ${path}`)
+  if (!handle) throw new Error(`File not found: ${path}`)
   const file = await handle.getFile()
   return file.text()
 }
 
-/** マップから1ファイルを読み、Blob URL を返す（画像など）。 */
+/** Read one file from the map and return a Blob URL (for images, etc.). */
 export async function readBlobUrl(
   files: Map<string, FileSystemFileHandle>,
   path: string,

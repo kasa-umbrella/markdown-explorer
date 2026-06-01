@@ -1,4 +1,4 @@
-// File System Access API のうち、標準 lib.dom に無い/不足する部分を補う最小宣言。
+// Minimal declarations filling in the parts of the File System Access API missing or incomplete in the standard lib.dom.
 export {}
 
 declare global {

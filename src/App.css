@@ -1,22 +1,24 @@
 .app {
   display: grid;
-  /* 列・行とも min を 0 にして、内側のスクロール枠が viewport を超えないようにする */
+  /* Set min to 0 on both columns and rows so the inner scroll area never exceeds the viewport */
   grid-template-columns: 300px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
 
-/* ───────── サイドバー ───────── */
+/* ───────── Sidebar ───────── */
 .sidebar {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /* flex 子（tree-scroll）が縮んでスクロールできるよう min-height を 0 に */
+  /* Set min-height to 0 so the flex child (tree-scroll) can shrink and scroll */
   min-height: 0;
   overflow: hidden;
   background: var(--panel);
   border-right: 1px solid var(--border);
+  /* Show the left pane in a slightly smaller, tighter font than the body */
+  font-size: 15.5px;
 }
 
 .sidebar-head {
@@ -25,8 +27,18 @@
 }
 
 .app-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   letter-spacing: 0.02em;
+}
+
+.app-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  object-fit: cover;
 }
 
 .root-row {
@@ -84,10 +96,134 @@
   border-color: var(--accent);
 }
 
+/* Search mode switch (name / contents) */
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.mode-btn:hover {
+  border-color: var(--accent);
+}
+
+.mode-btn.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .tree-scroll {
   flex: 1;
   overflow: auto;
   padding: 6px 4px 16px;
+}
+
+/* ───────── Content search results ───────── */
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.result {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 2px;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+}
+
+.result:hover {
+  background: var(--panel-2);
+}
+
+.result.selected {
+  background: var(--selected);
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.result-head .icon {
+  flex: none;
+  font-size: 12px;
+}
+
+.result-head .label {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-head .badge {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--selected);
+  border-radius: 8px;
+}
+
+.result-path {
+  overflow: hidden;
+  margin: 2px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snippets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.snippets li {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.snippets .ln {
+  flex: none;
+  min-width: 2.2em;
+  color: var(--muted);
+  text-align: right;
+}
+
+.snippets .snippet-text {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snippets mark {
+  color: var(--text);
+  background: var(--mark, #ffe58f);
+  border-radius: 2px;
 }
 
 .hint {
@@ -95,7 +231,7 @@
   color: var(--muted);
 }
 
-/* ───────── ツリー ───────── */
+/* ───────── Tree ───────── */
 .tree {
   list-style: none;
   margin: 0;
@@ -137,12 +273,12 @@
   font-weight: 600;
 }
 
-/* md を含まないフォルダ（あれば）は控えめに */
+/* Folders without any md (if present) are de-emphasized */
 .row.dir {
   color: var(--muted);
 }
 
-/* .md を直接持つフォルダは強調してハイライト */
+/* Folders that directly contain .md are emphasized and highlighted */
 .row.dir.has-md {
   color: var(--text);
   font-weight: 600;
@@ -152,10 +288,10 @@
   filter: none;
 }
 
-/* ───────── メイン ───────── */
+/* ───────── Main ───────── */
 .main {
   min-width: 0;
-  /* グリッド行内でプレビューが最下部まで届くよう min-height を 0 に */
+  /* Set min-height to 0 so the preview reaches the bottom within the grid row */
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
@@ -193,7 +329,17 @@
 }
 
 .gate h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
   color: var(--text);
+}
+
+.gate-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  object-fit: cover;
 }
 
 .primary {
@@ -230,11 +376,11 @@
   border-radius: 8px;
 }
 
-/* ───────── Markdown 本文 ───────── */
+/* ───────── Markdown body ───────── */
 .markdown-body {
   max-width: 820px;
   margin: 0 auto;
-  /* 下に少し余白を取って、末尾でも読みやすくする */
+  /* Add a little bottom padding so the end stays comfortable to read */
   padding: 24px 24px 20vh;
   line-height: 1.7;
 }
@@ -283,7 +429,7 @@
   border-left: 3px solid var(--border);
 }
 
-/* テーブルは枠内で独立して横スクロール（本文全体は横に動かさない） */
+/* Tables scroll horizontally on their own within a frame (the body as a whole never moves sideways) */
 .markdown-body .table-wrap {
   max-width: 100%;
   overflow-x: auto;
