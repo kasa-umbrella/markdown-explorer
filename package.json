@@ -8,15 +8,20 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "dist": "npm run build && electron-builder",
+    "pack": "npm run build && electron-builder --dir",
+    "install:local": "npm run pack && (osascript -e 'quit app \"markdown-explorer\"' || true) && rm -rf /Applications/markdown-explorer.app && cp -R release/mac-arm64/markdown-explorer.app /Applications/ && xattr -dr com.apple.quarantine /Applications/markdown-explorer.app && open /Applications/markdown-explorer.app",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/noto-sans-jp": "^5.2.9",
+    "cytoscape": "^3.34.0",
     "highlight.js": "^11.11.1",
     "idb-keyval": "^6.2.4",
     "markdown-it": "^14.2.0",
     "markdown-it-anchor": "^9.2.0",
     "markdown-it-task-lists": "^2.1.1",
+    "mermaid": "^11.15.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
@@ -51,7 +56,40 @@
     "mac": {
       "target": "dmg",
       "identity": null,
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extendInfo": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown",
+              "public.plain-text"
+            ]
+          }
+        ],
+        "UTImportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "net.daringfireball.markdown",
+            "UTTypeDescription": "Markdown Document",
+            "UTTypeConformsTo": [
+              "public.plain-text"
+            ],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": [
+                "md",
+                "markdown",
+                "mdown",
+                "mkd"
+              ],
+              "public.mime-type": [
+                "text/markdown"
+              ]
+            }
+          }
+        ]
+      }
     }
   }
 }

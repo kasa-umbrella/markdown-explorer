@@ -44,7 +44,7 @@ export function useDirectory() {
   // On first mount: restore the saved handle and, if permission is granted, scan right away.
   useEffect(() => {
     if (!SUPPORTED) {
-      setState({ status: 'error', rootName: null, scan: null, error: 'このブラウザは File System Access API に対応してないにゃ' })
+      setState({ status: 'error', rootName: null, scan: null, error: 'このブラウザは File System Access API に対応していません' })
       return
     }
     let cancelled = false
@@ -84,6 +84,36 @@ export function useDirectory() {
     }
   }, [scanInto])
 
+  /**
+   * Like `choose`, but exposes the picked handle and the resulting scan so the
+   * caller can act on them — used by the "open with Finder" → promote-to-root
+   * flow which needs to locate the originally-opened file inside the new root.
+   * Returns null when the user cancels the picker.
+   */
+  const chooseAndScan = useCallback(
+    async (): Promise<{ handle: FileSystemDirectoryHandle; scan: ScanResult } | null> => {
+      let handle: FileSystemDirectoryHandle
+      try {
+        handle = await pickDirectory()
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return null
+        setState({ status: 'error', rootName: null, scan: null, error: String(e) })
+        return null
+      }
+      setPending(null)
+      setState((s) => ({ ...s, status: 'scanning', rootName: handle.name, error: null }))
+      try {
+        const scan = await scanDirectory(handle)
+        setState({ status: 'ready', rootName: handle.name, scan, error: null })
+        return { handle, scan }
+      } catch (e) {
+        setState({ status: 'error', rootName: handle.name, scan: null, error: String(e) })
+        return null
+      }
+    },
+    [],
+  )
+
   /** For a handle awaiting permission, request access via a user action and then scan. */
   const grant = useCallback(async () => {
     if (!pending) return
@@ -109,5 +139,5 @@ export function useDirectory() {
     }
   }, [scanInto])
 
-  return { supported: SUPPORTED, ...state, choose, grant, reset, rescan }
+  return { supported: SUPPORTED, ...state, choose, chooseAndScan, grant, reset, rescan }
 }

@@ -1,10 +1,29 @@
 .app {
   display: grid;
   /* Set min to 0 on both columns and rows so the inner scroll area never exceeds the viewport */
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 300px) 5px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
+}
+
+.resize-handle {
+  cursor: col-resize;
+  background: transparent;
+  transition: background 120ms ease-out;
+}
+
+.resize-handle:hover {
+  background: var(--accent);
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.resizing .resize-handle {
+  background: var(--accent);
 }
 
 /* ───────── Sidebar ───────── */
@@ -85,7 +104,15 @@
 
 .icon-btn {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 30px;
+  padding: 0;
+  font-size: 14px;
+  /* Emoji glyphs sit on the text baseline by default, which pushes them down-right
+     inside a small button. Centering via flex + line-height: 1 lines them up cleanly. */
+  line-height: 1;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -93,6 +120,12 @@
 }
 
 .icon-btn:hover {
+  border-color: var(--accent);
+}
+
+.icon-btn.active {
+  color: #fff;
+  background: var(--accent);
   border-color: var(--accent);
 }
 
@@ -126,7 +159,8 @@
 .tree-scroll {
   flex: 1;
   overflow: auto;
-  padding: 6px 4px 16px;
+  /* Reserve space at the bottom so the floating ⚙ button doesn't sit on top of the last tree row. */
+  padding: 6px 4px 64px;
 }
 
 /* ───────── Content search results ───────── */
@@ -273,23 +307,11 @@
   font-weight: 600;
 }
 
-/* Folders without any md (if present) are de-emphasized */
-.row.dir {
-  color: var(--muted);
-}
-
-/* Folders that directly contain .md are emphasized and highlighted */
-.row.dir.has-md {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.row.dir.has-md .icon {
-  filter: none;
-}
-
 /* ───────── Main ───────── */
 .main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   /* Set min-height to 0 so the preview reaches the bottom within the grid row */
   min-height: 0;
@@ -297,15 +319,174 @@
   background: var(--bg);
 }
 
+.preview-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
 .preview {
   height: 100%;
   overflow: auto;
 }
 
+/* ───────── Tab bar ───────── */
+.tab-bar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 6px 4px 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  background: transparent;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  flex: none;
+}
+
+.tab:hover {
+  background: var(--panel-2);
+}
+
+.tab.active {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.tab.preview .tab-label {
+  font-style: italic;
+}
+
+.tab-icon {
+  flex: none;
+  font-size: 11px;
+}
+
+.tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.tab.active .tab-close:hover {
+  background: var(--selected);
+}
+
+/* ───────── Drop overlay ───────── */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(2px);
+  border: 2px dashed var(--accent);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.drop-icon {
+  font-size: 40px;
+}
+
+/* Swipe-back / swipe-forward progress indicator (drag-follow). */
+.swipe-indicator {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  font-size: 36px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  z-index: 10;
+  transition: opacity 80ms ease-out;
+  will-change: transform, opacity;
+}
+
+.swipe-back {
+  left: 16px;
+}
+
+.swipe-forward {
+  right: 16px;
+}
+
+.swipe-indicator.triggered {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.98);
+}
+
 .doc-path {
   position: sticky;
   top: 0;
-  padding: 6px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 24px 4px 8px;
   color: var(--muted);
   font-size: 12px;
   background: rgba(255, 255, 255, 0.9);
@@ -314,15 +495,53 @@
   z-index: 1;
 }
 
+.nav-buttons {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+.nav-btn {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
+.nav-btn:disabled {
+  color: var(--muted);
+  opacity: 0.35;
+  cursor: default;
+}
+
+.path-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .preview.empty,
 .preview.error,
 .gate {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 12px;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  min-height: 0;
   padding: 24px;
   text-align: center;
   color: var(--muted);
@@ -376,13 +595,262 @@
   border-radius: 8px;
 }
 
+/* ───────── Graph view (link map) ───────── */
+.graph-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background:
+    radial-gradient(circle, rgba(0, 0, 0, 0.04) 1px, transparent 1px) 0 0 / 18px 18px,
+    var(--bg);
+}
+
+.graph-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.graph-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.graph-overlay-error {
+  color: #c0341d;
+}
+
+.graph-overlay pre {
+  max-width: 600px;
+  padding: 10px 12px;
+  color: #c0341d;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  background: var(--panel);
+  border: 1px solid #c0341d;
+  border-radius: 6px;
+}
+
+.graph-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* ───────── Settings (floating button + modal) ───────── */
+.settings-fab {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: transform 120ms ease-out, border-color 120ms ease-out;
+}
+
+.settings-fab:hover {
+  border-color: var(--accent);
+  transform: rotate(45deg);
+}
+
+.settings-modal {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.settings-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section:first-of-type {
+  border-top: 0;
+}
+
+.settings-section h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 56px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.settings-row-toggle {
+  grid-template-columns: 110px 1fr auto;
+}
+
+.settings-label {
+  color: var(--text);
+}
+
+.settings-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.settings-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-value {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.settings-footer .primary,
+.settings-footer .ghost {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+/* ───────── Promote modal (Finder "Open With" handoff) ───────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+}
+
+.modal {
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px 22px 18px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+}
+
+.modal h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.modal p {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.modal-actions .primary,
+.modal-actions .ghost {
+  width: 100%;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
 /* ───────── Markdown body ───────── */
 .markdown-body {
-  max-width: 820px;
+  max-width: var(--md-max-width, 820px);
   margin: 0 auto;
   /* Add a little bottom padding so the end stays comfortable to read */
   padding: 24px 24px 20vh;
-  line-height: 1.7;
+  font-size: var(--md-font-size, 17px);
+  line-height: var(--md-line-height, 1.7);
+}
+
+/* Settings: wrap-code on ⇒ long lines fold instead of horizontal scrolling. */
+.app.wrap-code .markdown-body pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body h1,
@@ -469,4 +937,42 @@
 
 .markdown-body .task-list-item-checkbox {
   margin-right: 0.5em;
+}
+
+/* ───────── Mermaid diagrams ───────── */
+/* Hide the raw fenced source until the post-render swap replaces it with SVG. */
+.markdown-body pre:has(> code.language-mermaid) {
+  visibility: hidden;
+  min-height: 40px;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+}
+
+.markdown-body .mermaid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1em 0;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.markdown-body .mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-body .mermaid-error {
+  margin: 1em 0;
+  padding: 12px 14px;
+  color: #c0341d;
+  background: var(--panel);
+  border: 1px solid #c0341d;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
 }

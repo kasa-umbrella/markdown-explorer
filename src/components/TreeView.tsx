@@ -4,14 +4,17 @@ import type { TreeNode } from '../types'
 interface Props {
   node: TreeNode
   selectedPath: string | null
+  /** Single-click: open in preview tab (VSCode style). */
   onSelect: (path: string) => void
+  /** Double-click: pin / open as a non-preview tab. */
+  onActivate?: (path: string) => void
   /** While searching, expand every directory so all matches are visible */
   forceExpand: boolean
   /** Don't render the root itself, only its children (the top-level folder name is shown in the header) */
   depth?: number
 }
 
-export function TreeView({ node, selectedPath, onSelect, forceExpand, depth = 0 }: Props) {
+export function TreeView({ node, selectedPath, onSelect, onActivate, forceExpand, depth = 0 }: Props) {
   return (
     <ul className="tree" role="tree">
       {(node.children ?? []).map((child) => (
@@ -20,6 +23,7 @@ export function TreeView({ node, selectedPath, onSelect, forceExpand, depth = 0 
           node={child}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          onActivate={onActivate}
           forceExpand={forceExpand}
           depth={depth}
         />
@@ -28,7 +32,7 @@ export function TreeView({ node, selectedPath, onSelect, forceExpand, depth = 0 
   )
 }
 
-function TreeItem({ node, selectedPath, onSelect, forceExpand, depth = 0 }: Props) {
+function TreeItem({ node, selectedPath, onSelect, onActivate, forceExpand, depth = 0 }: Props) {
   const [open, setOpen] = useState(depth < 1)
 
   // Force-expand once a search begins.
@@ -46,6 +50,7 @@ function TreeItem({ node, selectedPath, onSelect, forceExpand, depth = 0 }: Prop
           className={`row file${selected ? ' selected' : ''}`}
           style={pad}
           onClick={() => onSelect(node.path)}
+          onDoubleClick={() => onActivate?.(node.path)}
           title={node.path}
         >
           <span className="icon">📄</span>
@@ -74,6 +79,7 @@ function TreeItem({ node, selectedPath, onSelect, forceExpand, depth = 0 }: Prop
               node={child}
               selectedPath={selectedPath}
               onSelect={onSelect}
+              onActivate={onActivate}
               forceExpand={forceExpand}
               depth={depth + 1}
             />

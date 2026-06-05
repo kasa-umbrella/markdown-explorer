@@ -6,12 +6,15 @@ interface Props {
   /** The active query, used to highlight matches inside snippets. */
   query: string
   selectedPath: string | null
+  /** Single-click: open in preview tab. */
   onSelect: (path: string) => void
+  /** Double-click: pin / open as a non-preview tab. */
+  onActivate?: (path: string) => void
 }
 
-export function SearchResults({ matches, query, selectedPath, onSelect }: Props) {
+export function SearchResults({ matches, query, selectedPath, onSelect, onActivate }: Props) {
   if (matches.length === 0) {
-    return <p className="hint">「{query.trim()}」を含むファイル、なかったにゃ</p>
+    return <p className="hint">「{query.trim()}」を含むファイルはありません</p>
   }
 
   return (
@@ -21,12 +24,13 @@ export function SearchResults({ matches, query, selectedPath, onSelect }: Props)
           <button
             className={`result${m.path === selectedPath ? ' selected' : ''}`}
             onClick={() => onSelect(m.path)}
+            onDoubleClick={() => onActivate?.(m.path)}
             title={m.path}
           >
             <div className="result-head">
               <span className="icon">📄</span>
               <span className="label">{m.name}</span>
-              <span className="badge" title={`${m.total} 行ヒットにゃん`}>
+              <span className="badge" title={`${m.total} 行ヒット`}>
                 {m.total}
               </span>
             </div>
