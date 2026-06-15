@@ -25,6 +25,16 @@ export function SearchResults({ matches, query, selectedPath, onSelect, onActiva
             className={`result${m.path === selectedPath ? ' selected' : ''}`}
             onClick={() => onSelect(m.path)}
             onDoubleClick={() => onActivate?.(m.path)}
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault()
+                onActivate?.(m.path)
+              }
+            }}
+            onMouseDown={(e) => {
+              // Suppress middle-click autoscroll so onAuxClick can open a new tab cleanly.
+              if (e.button === 1) e.preventDefault()
+            }}
             title={m.path}
           >
             <div className="result-head">

@@ -108,6 +108,13 @@ export function GraphView({ scan, activePath, onSelectFile }: Props) {
       for (const id of graph.nodes) colorByPath.set(id, colorFor(id))
       const grey = { fill: '#cfd6e4', stroke: '#9aa4b8' }
 
+      // Cytoscape can't read CSS vars directly — snapshot the active theme palette
+      // once at graph build time so labels stay readable in both light and dark.
+      const themeStyles = getComputedStyle(document.documentElement)
+      const themeText = themeStyles.getPropertyValue('--text').trim() || '#1f2328'
+      const themeBg = themeStyles.getPropertyValue('--bg').trim() || '#ffffff'
+      const themeAccent = themeStyles.getPropertyValue('--accent').trim() || '#2f6feb'
+
       const elements = [
         ...graph.nodes.map((id) => {
           const c = colorByPath.get(id) ?? grey
@@ -144,19 +151,19 @@ export function GraphView({ scan, activePath, onSelectFile }: Props) {
             style: {
               'background-color': 'data(fill)',
               'border-color': 'data(stroke)',
-              'border-width': 2,
+              'border-width': 3,
               label: 'data(label)',
-              'font-size': 11,
+              'font-size': 14,
               'font-family': "'Noto Sans JP', sans-serif",
-              color: '#1f2328',
+              color: themeText,
               'text-valign': 'bottom',
-              'text-margin-y': 5,
-              'text-background-color': '#ffffff',
+              'text-margin-y': 7,
+              'text-background-color': themeBg,
               'text-background-opacity': 0.88,
-              'text-background-padding': '3px',
+              'text-background-padding': '4px',
               'text-background-shape': 'roundrectangle',
-              width: 22,
-              height: 22,
+              width: 36,
+              height: 36,
             },
           },
           {
@@ -164,24 +171,24 @@ export function GraphView({ scan, activePath, onSelectFile }: Props) {
             // active one so the eye finds it at a glance against the busy field.
             selector: 'node:selected, node.active',
             style: {
-              'border-color': '#2f6feb',
-              'border-width': 4,
-              width: 30,
-              height: 30,
-              'font-size': 12,
+              'border-color': themeAccent,
+              'border-width': 6,
+              width: 52,
+              height: 52,
+              'font-size': 16,
               'z-index': 10,
             },
           },
           {
             selector: 'edge',
             style: {
-              width: 1.6,
+              width: 2.2,
               'line-color': 'data(color)',
               'curve-style': 'bezier',
               'target-arrow-color': 'data(color)',
               'target-arrow-shape': 'triangle',
-              'arrow-scale': 0.9,
-              'target-distance-from-node': 2,
+              'arrow-scale': 1.1,
+              'target-distance-from-node': 3,
               opacity: 0.85,
             },
           },
@@ -190,8 +197,14 @@ export function GraphView({ scan, activePath, onSelectFile }: Props) {
           name: 'cose',
           animate: false,
           fit: true,
-          padding: 32,
-          // The defaults look fine for small/medium graphs; we leave knobs alone.
+          padding: 56,
+          // Spread nodes more aggressively than the cose defaults so the larger
+          // glyphs above don't pile on top of each other in dense vaults.
+          nodeRepulsion: 12000,
+          idealEdgeLength: 140,
+          nodeOverlap: 60,
+          componentSpacing: 100,
+          gravity: 0.6,
         },
       })
 

@@ -1,9 +1,4 @@
-const MD_EXT = /\.(md|markdown|mdown|mkd)$/i
-
-/** Whether a path points to a Markdown file. */
-export function isMarkdownPath(path: string): boolean {
-  return MD_EXT.test(path)
-}
+import { matchesViewable } from './extensions'
 
 /** One matching line within a file. */
 export interface SearchSnippet {
@@ -29,16 +24,17 @@ export interface SearchMatch {
 const MAX_SNIPPETS = 3
 
 /**
- * Read every Markdown file in the handle map and cache its text, keyed by path.
+ * Read every viewable file in the handle map and cache its text, keyed by path.
  * Unreadable files are skipped silently. Reads run concurrently.
  */
 export async function buildContentIndex(
   files: Map<string, FileSystemFileHandle>,
+  viewable: ReadonlySet<string>,
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>()
   const tasks: Promise<void>[] = []
   for (const [path, handle] of files) {
-    if (!isMarkdownPath(path)) continue
+    if (!matchesViewable(path, viewable)) continue
     tasks.push(
       (async () => {
         try {

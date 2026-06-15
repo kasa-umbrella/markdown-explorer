@@ -7,21 +7,23 @@ type Status = 'idle' | 'indexing' | 'ready'
 const DEBOUNCE_MS = 200
 
 /**
- * Search Markdown file contents for `query`. The content index is built lazily
- * on first use and cached until the file set changes (e.g. a rescan).
+ * Search viewable file contents for `query`. The content index is built lazily
+ * on first use and cached until the file set or the viewable-extension set changes.
  *
  * @param enabled When false, the hook stays idle and returns no matches.
  */
 export function useContentSearch(
   files: Map<string, FileSystemFileHandle>,
+  viewable: ReadonlySet<string>,
   query: string,
   enabled: boolean,
 ) {
   const [matches, setMatches] = useState<SearchMatch[]>([])
   const [status, setStatus] = useState<Status>('idle')
   const indexRef = useRef<Map<string, string> | null>(null)
-  // Identity of the file map the cached index was built from.
+  // Identity of the file map / viewable set the cached index was built from.
   const indexForRef = useRef<Map<string, FileSystemFileHandle> | null>(null)
+  const indexForViewableRef = useRef<ReadonlySet<string> | null>(null)
 
   const active = enabled && query.trim().length > 0
 
@@ -29,13 +31,18 @@ export function useContentSearch(
     if (!active) return
     let cancelled = false
     const timer = setTimeout(async () => {
-      // Build (and cache) the index on first use, or after the file set changed.
-      if (indexRef.current === null || indexForRef.current !== files) {
+      // Build (and cache) the index on first use, or after the file set / extension set changed.
+      if (
+        indexRef.current === null ||
+        indexForRef.current !== files ||
+        indexForViewableRef.current !== viewable
+      ) {
         setStatus('indexing')
-        const index = await buildContentIndex(files)
+        const index = await buildContentIndex(files, viewable)
         if (cancelled) return
         indexRef.current = index
         indexForRef.current = files
+        indexForViewableRef.current = viewable
       }
       if (cancelled) return
       setMatches(searchContent(indexRef.current, query))
@@ -46,7 +53,7 @@ export function useContentSearch(
       cancelled = true
       clearTimeout(timer)
     }
-  }, [files, query, active])
+  }, [files, viewable, query, active])
 
   // Gate the returned values rather than resetting state inside an effect, so a
   // disabled or empty search reports nothing without an extra render pass.

@@ -1,4 +1,4 @@
-/** A single node in the tree: a directory or an .md file. */
+/** A single node in the tree: a directory or a viewable file. */
 export interface TreeNode {
   /** Path relative to the root. e.g. "docs/guide.md" */
   path: string
@@ -7,16 +7,16 @@ export interface TreeNode {
   kind: 'dir' | 'file'
   /** Only when kind === 'dir'. Child nodes sorted by name. */
   children?: TreeNode[]
-  /** Only when kind === 'dir'. True if the folder directly contains .md files. */
-  hasMarkdown?: boolean
+  /** Only when kind === 'dir'. True if the folder directly contains viewable files. */
+  hasViewable?: boolean
 }
 
 /** Result of scanning a folder. */
 export interface ScanResult {
-  /** Tree for the sidebar (directories and .md only) */
+  /** Tree for the sidebar (directories and viewable files only) */
   tree: TreeNode
-  /** Handles for all files. Keyed by path relative to the root. Includes non-.md files such as images. */
+  /** Handles for all files. Keyed by path relative to the root. Includes non-viewable files such as images. */
   files: Map<string, FileSystemFileHandle>
-  /** Total number of .md files found during the scan */
-  markdownCount: number
+  /** Total number of viewable files found during the scan */
+  viewableCount: number
 }

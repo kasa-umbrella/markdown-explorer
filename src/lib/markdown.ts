@@ -36,3 +36,24 @@ export const md: MarkdownIt = new MarkdownIt({
 export function renderMarkdown(src: string): string {
   return md.render(src)
 }
+
+/**
+ * Render an arbitrary text blob as a single highlighted code block.
+ * Used for non-Markdown viewable files (YAML, JSON, ...). The output is wrapped in
+ * <pre><code class="hljs language-X"> so the existing .markdown-body CSS styles it.
+ */
+export function renderAsCodeBlock(content: string, lang: string): string {
+  const safeLang = lang.replace(/[^a-z0-9_-]/gi, '').toLowerCase()
+  let body: string
+  if (safeLang && hljs.getLanguage(safeLang)) {
+    try {
+      body = hljs.highlight(content, { language: safeLang, ignoreIllegals: true }).value
+    } catch {
+      body = md.utils.escapeHtml(content)
+    }
+  } else {
+    body = md.utils.escapeHtml(content)
+  }
+  const cls = safeLang ? `hljs language-${safeLang}` : 'hljs'
+  return `<pre><code class="${cls}">${body}</code></pre>`
+}

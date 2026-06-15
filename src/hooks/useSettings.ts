@@ -1,4 +1,8 @@
 import { useCallback, useState } from 'react'
+import { parseExtensionList } from '../lib/extensions'
+
+/** Color scheme: 'system' tracks the OS preference, 'light' / 'dark' force the choice. */
+export type ThemePref = 'system' | 'light' | 'dark'
 
 export interface Settings {
   /** BrowserWindow opacity. macOS supports this natively. */
@@ -9,10 +13,17 @@ export interface Settings {
   mainFontSize: number
   /** Line-height multiplier for the rendered Markdown body. */
   mainLineHeight: number
-  /** Reading column width (max-width of .markdown-body). */
+  /** Reading column width as a percentage of the main panel (max-width of .markdown-body). */
   mainMaxWidth: number
   /** Soft-wrap long lines inside fenced code blocks instead of horizontal scrolling. */
   wrapCode: boolean
+  /** Color scheme preference. See {@link ThemePref}. */
+  theme: ThemePref
+  /**
+   * Additional file extensions (without the leading dot, lowercase) to show in the tree and
+   * render as syntax-highlighted code. Markdown extensions are always supported on top of this.
+   */
+  extraExtensions: string[]
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -20,15 +31,17 @@ export const DEFAULT_SETTINGS: Settings = {
   alwaysOnTop: false,
   mainFontSize: 17,
   mainLineHeight: 1.7,
-  mainMaxWidth: 820,
+  mainMaxWidth: 95,
   wrapCode: false,
+  theme: 'system',
+  extraExtensions: ['yaml', 'yml', 'json'],
 }
 
 export const SETTINGS_RANGES = {
   windowOpacity: { min: 0.4, max: 1, step: 0.05 },
   mainFontSize: { min: 12, max: 28, step: 1 },
   mainLineHeight: { min: 1.3, max: 2.2, step: 0.1 },
-  mainMaxWidth: { min: 520, max: 1400, step: 20 },
+  mainMaxWidth: { min: 60, max: 100, step: 1 },
 } as const
 
 const STORAGE_KEY = 'app-settings'
@@ -60,12 +73,27 @@ function sanitize(raw: unknown): Settings {
       SETTINGS_RANGES.mainLineHeight.max,
     ),
     mainMaxWidth: clamp(
-      num(r.mainMaxWidth, DEFAULT_SETTINGS.mainMaxWidth),
+      // Legacy px values (pre-percent migration) are above the new range — reset to default.
+      ((): number => {
+        const v = num(r.mainMaxWidth, DEFAULT_SETTINGS.mainMaxWidth)
+        return v > SETTINGS_RANGES.mainMaxWidth.max ? DEFAULT_SETTINGS.mainMaxWidth : v
+      })(),
       SETTINGS_RANGES.mainMaxWidth.min,
       SETTINGS_RANGES.mainMaxWidth.max,
     ),
     wrapCode: Boolean(r.wrapCode),
+    theme: sanitizeTheme(r.theme),
+    extraExtensions: sanitizeExtensions(r.extraExtensions),
   }
+}
+
+function sanitizeTheme(raw: unknown): ThemePref {
+  return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : DEFAULT_SETTINGS.theme
+}
+
+function sanitizeExtensions(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return DEFAULT_SETTINGS.extraExtensions
+  return parseExtensionList(raw.filter((x): x is string => typeof x === 'string').join(','))
 }
 
 function loadInitial(): Settings {

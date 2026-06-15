@@ -1,12 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
-import { renderMarkdown } from '../lib/markdown'
+import { createRoot, type Root } from 'react-dom/client'
+import { renderAsCodeBlock, renderMarkdown } from '../lib/markdown'
 import { readBlobUrl, readTextFile } from '../lib/fsAccess'
-import { isExternalUrl, isMarkdownLink, resolveRelative } from '../lib/paths'
+import { getExtension, isMarkdownPath } from '../lib/extensions'
+import {
+  guessMimeFromPath,
+  isExternalUrl,
+  isMarkdownLink,
+  resolveAbsoluteRelative,
+  resolveRelative,
+} from '../lib/paths'
 import { renderMermaid } from '../lib/mermaid'
+import { isFlowchart } from '../lib/mermaidFlow'
+import { MermaidFlow } from './MermaidFlow'
 
 export type PreviewSource =
   | { kind: 'in-root'; path: string; files: Map<string, FileSystemFileHandle> }
-  | { kind: 'external'; name: string; content: string }
+  | {
+      kind: 'external'
+      name: string
+      content: string
+      /** Absolute OS path of the source file, when known. Enables relative path resolution. */
+      absolutePath?: string
+    }
 
 interface Props {
   source: PreviewSource | null
@@ -16,6 +32,35 @@ interface Props {
   onForward: () => void
   canBack: boolean
   canForward: boolean
+  /**
+   * Absolute OS path of the active root (in-root tabs only). Required for the
+   * Git Time Machine; when null, the time bar still opens but prompts the user
+   * to link the root via `onLinkRoot`.
+   */
+  rootAbsPath?: string | null
+  /** Display name of the active root; shown in the time-bar's link prompt. */
+  rootName?: string | null
+  /** Opens the native directory picker and persists the chosen abs path. */
+  onLinkRoot?: () => Promise<string | null>
+  /**
+   * Open an absolute filesystem path as a new external tab. Called when the user
+   * clicks a relative .md link inside an externally-opened file — we don't have a
+   * tab-local history for external tabs, so navigation spawns a new tab instead.
+   */
+  onOpenExternalPath?: (absolutePath: string) => void
+  /**
+   * Ask the host to re-read the active source from disk. Wired to the ↻ button
+   * and to the ⌘+R / window-focus reload paths upstream. The component itself
+   * doesn't decide *how* the reload happens — for in-root sources, the host bumps
+   * `reloadCounter`; for external sources, it patches the tab content in place.
+   */
+  onReload?: () => void
+  /**
+   * Monotonic counter the host bumps to force a fresh `getFile()` read of the
+   * current in-root path. External sources don't use it (their content prop
+   * already changes when the host re-reads on their behalf).
+   */
+  reloadCounter?: number
 }
 
 interface Gesture {
@@ -31,6 +76,12 @@ export function Preview({
   onForward,
   canBack,
   canForward,
+  rootAbsPath = null,
+  rootName = null,
+  onLinkRoot,
+  onOpenExternalPath,
+  onReload,
+  reloadCounter = 0,
 }: Props) {
   const [html, setHtml] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -45,8 +96,71 @@ export function Preview({
   const files = source?.kind === 'in-root' ? source.files : null
   const externalName = source?.kind === 'external' ? source.name : null
   const externalContent = source?.kind === 'external' ? source.content : null
+  const externalAbsPath = source?.kind === 'external' ? source.absolutePath ?? null : null
+
+  // ─── Time Machine state ───
+  // `timeOpen` toggles the history bar in the header. `cursorSha` selects which
+  // revision drives the rendered content — null means "working tree" (current FS).
+  // History is loaded lazily on first open of the bar for each file.
+  const [timeOpen, setTimeOpen] = useState(false)
+  const [commits, setCommits] = useState<MdexpGitCommit[] | null>(null)
+  const [historyStatus, setHistoryStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [cursorSha, setCursorSha] = useState<string | null>(null)
+
+  /**
+   * Absolute path of the active in-root file. Built by joining the saved root
+   * abs path with the FSA-relative path. Null whenever either side is missing
+   * (external tabs, or root not yet linked).
+   */
+  const absoluteFilePath =
+    kind === 'in-root' && path && rootAbsPath
+      ? `${rootAbsPath.replace(/\/+$/, '')}/${path}`
+      : null
+
+  /** Reset the time-machine cursor and cached history whenever the file changes. */
+  useEffect(() => {
+    setCursorSha(null)
+    setCommits(null)
+    setHistoryStatus('idle')
+    setHistoryError(null)
+  }, [kind, path, externalName])
+
+  /** External tabs and absent paths can't be time-traveled — fold the bar shut. */
+  useEffect(() => {
+    if (kind !== 'in-root') setTimeOpen(false)
+  }, [kind])
+
+  /** Fetch `git log --follow` once the bar is opened against a linked root. */
+  useEffect(() => {
+    if (!timeOpen || !absoluteFilePath) return
+    const api = window.mdexp
+    if (!api?.gitHistory) return
+    let cancelled = false
+    setHistoryStatus('loading')
+    setHistoryError(null)
+    ;(async () => {
+      try {
+        const list = await api.gitHistory(absoluteFilePath)
+        if (cancelled) return
+        setCommits(list)
+        setHistoryStatus('idle')
+      } catch (e) {
+        if (cancelled) return
+        setHistoryError(e instanceof Error ? e.message : String(e))
+        setHistoryStatus('error')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [timeOpen, absoluteFilePath])
 
   // When the selected source changes, load and render it.
+  // Markdown files go through the full markdown-it pipeline; everything else is rendered as a
+  // single syntax-highlighted code block keyed off its extension (yaml/json/...).
+  // When `cursorSha` is set, the in-root branch routes through `git show <sha>:<file>`
+  // instead of the working-tree read so the user sees that revision's content.
   useEffect(() => {
     if (!kind) {
       setHtml('')
@@ -55,17 +169,33 @@ export function Preview({
     }
     if (kind === 'external') {
       setError(null)
-      setHtml(renderMarkdown(externalContent ?? ''))
+      const name = externalName ?? ''
+      if (isMarkdownPath(name)) {
+        setHtml(renderMarkdown(externalContent ?? ''))
+      } else {
+        const ext = getExtension(name) ?? ''
+        setHtml(renderAsCodeBlock(externalContent ?? '', ext))
+      }
       return
     }
     if (!path || !files) return
     let cancelled = false
     ;(async () => {
       try {
-        const src = await readTextFile(files, path)
+        let src: string
+        if (cursorSha && absoluteFilePath && window.mdexp?.gitShow) {
+          src = await window.mdexp.gitShow(absoluteFilePath, cursorSha)
+        } else {
+          src = await readTextFile(files, path)
+        }
         if (cancelled) return
         setError(null)
-        setHtml(renderMarkdown(src))
+        if (isMarkdownPath(path)) {
+          setHtml(renderMarkdown(src))
+        } else {
+          const ext = getExtension(path) ?? ''
+          setHtml(renderAsCodeBlock(src, ext))
+        }
       } catch (e) {
         if (!cancelled) setError(String(e))
       }
@@ -73,7 +203,7 @@ export function Preview({
     return () => {
       cancelled = true
     }
-  }, [kind, path, files, externalContent])
+  }, [kind, path, files, externalName, externalContent, cursorSha, absoluteFilePath, reloadCounter])
 
   // After rendering: swap image relative paths for Blob URLs (in-root only).
   useEffect(() => {
@@ -123,15 +253,40 @@ export function Preview({
     }
   }, [html, kind, path, files])
 
-  // For external tabs: still wrap tables and mark external anchors.
+  // For external tabs: wrap tables, mark external anchors, and — when we know the
+  // file's on-disk location — resolve relative image refs by reading them via IPC.
   useEffect(() => {
     const el = containerRef.current
     if (!el || kind !== 'external') return
+    const created: string[] = []
+    let cancelled = false
+    const api = window.mdexp
+
     for (const img of Array.from(el.querySelectorAll('img'))) {
       const raw = img.getAttribute('src') ?? ''
       if (!raw || isExternalUrl(raw)) continue
-      img.setAttribute('alt', `（外部ファイルでは相対パスを解決できません：${raw}）`)
+      // Without the source's absolute path, we can't locate the image at all.
+      // Same when we're outside Electron (no IPC bridge).
+      if (!externalAbsPath || !api?.readBinaryFileByPath) {
+        img.setAttribute('alt', `（外部ファイルでは相対パスを解決できません：${raw}）`)
+        continue
+      }
+      const targetAbs = resolveAbsoluteRelative(externalAbsPath, raw)
+      ;(async () => {
+        try {
+          const buf = await api.readBinaryFileByPath(targetAbs)
+          if (cancelled) return
+          const blob = new Blob([buf], { type: guessMimeFromPath(targetAbs) })
+          const url = URL.createObjectURL(blob)
+          created.push(url)
+          img.setAttribute('src', url)
+        } catch {
+          if (cancelled) return
+          img.setAttribute('alt', `（画像が見つかりません：${raw}）`)
+        }
+      })()
     }
+
     for (const table of Array.from(el.querySelectorAll('table'))) {
       if (table.parentElement?.classList.contains('table-wrap')) continue
       const wrap = document.createElement('div')
@@ -146,15 +301,25 @@ export function Preview({
         a.setAttribute('rel', 'noopener noreferrer')
       }
     }
-  }, [html, kind])
 
-  // Render fenced ```mermaid blocks to SVG.
+    return () => {
+      cancelled = true
+      created.forEach((u) => URL.revokeObjectURL(u))
+    }
+  }, [html, kind, externalAbsPath])
+
+  // Render fenced ```mermaid blocks. flowchart/graph diagrams are handed to the
+  // interactive React-Flow renderer (drag/zoom/pan); everything else falls back
+  // to mermaid's own SVG output so we don't have to support the long tail of
+  // sequenceDiagram/gantt/stateDiagram layouts ourselves.
   // Markdown.ts deliberately skips highlight.js for `lang === 'mermaid'`, so the source
   // survives inside <code class="language-mermaid">…</code> with HTML entities intact.
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     let cancelled = false
+    /** Roots mounted into the current `html` render so we can unmount on the next pass. */
+    const mountedRoots: Root[] = []
     const blocks = el.querySelectorAll<HTMLElement>('code.language-mermaid')
     for (const code of Array.from(blocks)) {
       const pre = code.parentElement
@@ -162,6 +327,17 @@ export function Preview({
       if (pre.dataset.mermaid === 'done') continue
       pre.dataset.mermaid = 'done'
       const source = code.textContent ?? ''
+
+      if (isFlowchart(source)) {
+        const host = document.createElement('div')
+        host.className = 'mermaid-flow-host'
+        pre.replaceWith(host)
+        const root = createRoot(host)
+        mountedRoots.push(root)
+        root.render(<MermaidFlow source={source} />)
+        continue
+      }
+
       ;(async () => {
         try {
           const svg = await renderMermaid(source)
@@ -181,6 +357,15 @@ export function Preview({
     }
     return () => {
       cancelled = true
+      // Tear down React roots before the host nodes get clobbered by the next innerHTML
+      // assignment; otherwise React warns about unmounted components on stale DOM.
+      for (const root of mountedRoots) {
+        try {
+          root.unmount()
+        } catch {
+          /* root may already be detached if the document was replaced */
+        }
+      }
     }
   }, [html])
 
@@ -202,20 +387,34 @@ export function Preview({
       if (kind === 'in-root' && path && isMarkdownLink(href)) {
         e.preventDefault()
         onNavigate(resolveRelative(path, href))
-      } else {
-        // External tab links or non-.md local references — block but don't navigate.
-        e.preventDefault()
+        return
       }
+      if (
+        kind === 'external' &&
+        externalAbsPath &&
+        isMarkdownLink(href) &&
+        onOpenExternalPath
+      ) {
+        // External tabs have no per-tab history, so navigation spawns a sibling tab
+        // pinned to the resolved absolute path.
+        e.preventDefault()
+        onOpenExternalPath(resolveAbsoluteRelative(externalAbsPath, href))
+        return
+      }
+      // Non-.md local references, or external tabs without a known abs path — block.
+      e.preventDefault()
     }
     el.addEventListener('click', onClick)
     return () => el.removeEventListener('click', onClick)
-  }, [html, kind, path, onNavigate])
+  }, [html, kind, path, externalAbsPath, onNavigate, onOpenExternalPath])
 
-  // Scroll back to the top whenever the file changes — and also after the new
-  // content has been rendered, in case the layout grew the scrollTop on re-render.
+  // Scroll back to the top whenever the *file* changes. Deliberately excludes
+  // `html` so that a reload (same file, fresh bytes) keeps the user's scroll
+  // position — the load effect will repaint markdown in-place without yanking
+  // the viewport back to the top.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 })
-  }, [kind, path, externalName, html])
+  }, [kind, path, externalName])
 
   // Horizontal trackpad swipe → back / forward. macOS convention: swiping with two
   // fingers to the right (deltaX accumulates negative) goes back; left goes forward.
@@ -359,7 +558,7 @@ export function Preview({
   if (!source) {
     return (
       <div className="preview empty">
-        <p>左から .md を選択してください。ここに表示されます。</p>
+        <p>左からファイルを選択してください。ここに表示されます。</p>
       </div>
     )
   }
@@ -383,6 +582,8 @@ export function Preview({
     : undefined
   const headerText =
     source.kind === 'in-root' ? source.path : `📥 ${source.name}（外部ファイル）`
+  const activeCommit =
+    cursorSha && commits ? commits.find((c) => c.sha === cursorSha) ?? null : null
   return (
     <div className="preview-wrap" ref={swipeRef}>
       <div className="preview" ref={scrollRef}>
@@ -406,9 +607,55 @@ export function Preview({
             >
               ›
             </button>
+            {onReload && (
+              <button
+                className="nav-btn reload-btn"
+                onClick={() => onReload()}
+                disabled={
+                  kind === 'external' && !externalAbsPath
+                }
+                title={
+                  kind === 'external' && !externalAbsPath
+                    ? 'このタブはパスが不明なので再読込できません'
+                    : 'ディスクから読み直す (⌘+R)'
+                }
+                aria-label="再読込"
+              >
+                ↻
+              </button>
+            )}
           </div>
           <span className="path-text">{headerText}</span>
+          {kind === 'in-root' && (
+            <button
+              className={`nav-btn time-btn${timeOpen ? ' active' : ''}`}
+              onClick={() => setTimeOpen((o) => !o)}
+              title="タイムマシン: 過去のバージョンを覗く"
+              aria-pressed={timeOpen}
+              aria-label="タイムマシン"
+            >
+              🕰
+            </button>
+          )}
+          {activeCommit && (
+            <span className="time-badge" title={activeCommit.subject}>
+              {formatDateShort(activeCommit.dateISO)} · {activeCommit.shortSha}
+            </span>
+          )}
         </div>
+        {timeOpen && kind === 'in-root' && (
+          <TimeMachineBar
+            rootAbsPath={rootAbsPath}
+            rootName={rootName}
+            absoluteFilePath={absoluteFilePath}
+            historyStatus={historyStatus}
+            historyError={historyError}
+            commits={commits}
+            cursorSha={cursorSha}
+            onCursor={setCursorSha}
+            onLinkRoot={onLinkRoot}
+          />
+        )}
         <article
           ref={containerRef}
           className="markdown-body"
@@ -424,6 +671,190 @@ export function Preview({
           {gesture.dir === 'back' ? '‹' : '›'}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Compact date for inline badges (e.g. "2024/03/14"). Falls back to the raw
+ * ISO string if parsing fails — better to show something than nothing.
+ */
+function formatDateShort(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}/${m}/${day}`
+}
+
+interface TimeMachineBarProps {
+  rootAbsPath: string | null
+  rootName: string | null
+  absoluteFilePath: string | null
+  historyStatus: 'idle' | 'loading' | 'error'
+  historyError: string | null
+  commits: MdexpGitCommit[] | null
+  cursorSha: string | null
+  onCursor: (sha: string | null) => void
+  onLinkRoot?: () => Promise<string | null>
+}
+
+/**
+ * Slider that walks the active file through its git history. The rightmost
+ * stop is always "現在" (working tree); slots to the left are commits, newest
+ * first. Selecting "現在" clears the cursor so the FSA-backed read path takes
+ * over again.
+ *
+ * Three degenerate states get inline messages rather than a slider:
+ *   • the root isn't linked yet           → prompt the user to link it
+ *   • git history is being fetched        → status spinner
+ *   • the file isn't tracked / git failed → friendly explanation
+ */
+function TimeMachineBar({
+  rootAbsPath,
+  rootName,
+  absoluteFilePath,
+  historyStatus,
+  historyError,
+  commits,
+  cursorSha,
+  onCursor,
+  onLinkRoot,
+}: TimeMachineBarProps) {
+  // Unlinked root → prompt.
+  if (!rootAbsPath || !absoluteFilePath) {
+    return (
+      <div className="time-bar time-bar-prompt">
+        <span className="time-bar-msg">
+          {rootName ? <>「{rootName}」</> : 'このフォルダ'}
+          の場所を教えてくれたら、過去の自分を、呼び戻せる、よ。
+        </span>
+        <button className="primary time-link-btn" onClick={() => onLinkRoot?.()}>
+          フォルダを指す
+        </button>
+      </div>
+    )
+  }
+  if (historyStatus === 'error') {
+    return (
+      <div className="time-bar time-bar-prompt time-bar-error">
+        <span className="time-bar-msg">
+          履歴を、たどれません。{historyError ? <> — {historyError}</> : null}
+        </span>
+      </div>
+    )
+  }
+  // `commits === null` covers both the initial render before the load effect runs
+  // and the in-flight loading window — treat both as "spinner-ish".
+  if (commits === null || historyStatus === 'loading') {
+    return (
+      <div className="time-bar time-bar-prompt">
+        <span className="time-bar-msg">過去を、たぐっています…</span>
+      </div>
+    )
+  }
+  if (commits.length === 0) {
+    return (
+      <div className="time-bar time-bar-prompt">
+        <span className="time-bar-msg">
+          このファイルには、まだ……コミットの足跡が、ない、みたい。
+        </span>
+      </div>
+    )
+  }
+
+  // Slot mapping: 0..commits.length-1 → oldest..newest commit, commits.length → working tree.
+  // The slider runs left-to-right as time forward, so the highest value is "現在".
+  const max = commits.length
+  const currentSlot = cursorSha
+    ? commits.findIndex((c) => c.sha === cursorSha)
+    : max
+  const slotValue = currentSlot < 0 ? max : currentSlot
+  const isLatest = slotValue === max
+  const activeCommit = isLatest ? null : commits[slotValue]
+
+  const onSlide = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = Number(e.target.value)
+    if (!Number.isFinite(v)) return
+    if (v >= max) {
+      onCursor(null)
+      return
+    }
+    const c = commits[v]
+    if (c) onCursor(c.sha)
+  }
+
+  const oldest = commits[0]
+  const newest = commits[commits.length - 1]
+  return (
+    <div className="time-bar">
+      <button
+        className="time-step-btn"
+        onClick={() => {
+          if (slotValue > 0) {
+            const c = commits[slotValue - 1]
+            if (c) onCursor(c.sha)
+          }
+        }}
+        disabled={slotValue <= 0}
+        title="一つ古い版へ"
+        aria-label="一つ古い版"
+      >
+        ‹
+      </button>
+      <input
+        className="time-slider"
+        type="range"
+        min={0}
+        max={max}
+        step={1}
+        value={slotValue}
+        onChange={onSlide}
+        aria-label="バージョン"
+      />
+      <button
+        className="time-step-btn"
+        onClick={() => {
+          if (slotValue < max) {
+            const next = slotValue + 1
+            if (next >= max) onCursor(null)
+            else {
+              const c = commits[next]
+              if (c) onCursor(c.sha)
+            }
+          }
+        }}
+        disabled={slotValue >= max}
+        title="一つ新しい版へ"
+        aria-label="一つ新しい版"
+      >
+        ›
+      </button>
+      <div className="time-label">
+        {isLatest ? (
+          <span className="time-label-now">現在（作業ツリー）</span>
+        ) : activeCommit ? (
+          <span className="time-label-commit" title={activeCommit.subject}>
+            <strong>{formatDateShort(activeCommit.dateISO)}</strong>
+            <span className="time-sha">{activeCommit.shortSha}</span>
+            <span className="time-subject">{activeCommit.subject}</span>
+          </span>
+        ) : null}
+      </div>
+      {!isLatest && (
+        <button
+          className="time-now-btn"
+          onClick={() => onCursor(null)}
+          title="現在に戻る"
+        >
+          ⤴ 現在
+        </button>
+      )}
+      <div className="time-range" aria-hidden>
+        <span>{formatDateShort(oldest.dateISO)}</span>
+        <span>{formatDateShort(newest.dateISO)}</span>
+      </div>
     </div>
   )
 }

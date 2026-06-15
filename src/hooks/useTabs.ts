@@ -2,7 +2,17 @@ import { useCallback, useMemo, useState } from 'react'
 
 export type TabSource =
   | { kind: 'in-root'; path: string }
-  | { kind: 'external'; name: string; content: string }
+  | {
+      kind: 'external'
+      name: string
+      content: string
+      /**
+       * Absolute OS path the content was read from, when known (Finder open-with,
+       * VSCode drag-drop, etc.). Enables resolving relative image / link references
+       * inside the markdown — without it we can only show alt-text placeholders.
+       */
+      absolutePath?: string
+    }
 
 export interface Tab {
   id: string
@@ -72,19 +82,27 @@ export function useTabs() {
     [],
   )
 
-  const openExternal = useCallback((name: string, content: string): string => {
-    const id = makeId()
-    setState((prev) => {
-      const newTab: Tab = {
-        id,
-        source: { kind: 'external', name, content },
-        preview: false,
-        history: EMPTY_HISTORY,
-      }
-      return { tabs: [...prev.tabs, newTab], activeIndex: prev.tabs.length }
-    })
-    return id
-  }, [])
+  const openExternal = useCallback(
+    (name: string, content: string, absolutePath?: string): string => {
+      const id = makeId()
+      setState((prev) => {
+        const newTab: Tab = {
+          id,
+          source: {
+            kind: 'external',
+            name,
+            content,
+            ...(absolutePath ? { absolutePath } : {}),
+          },
+          preview: false,
+          history: EMPTY_HISTORY,
+        }
+        return { tabs: [...prev.tabs, newTab], activeIndex: prev.tabs.length }
+      })
+      return id
+    },
+    [],
+  )
 
   const close = useCallback((index: number) => {
     setState((prev) => {
@@ -108,6 +126,29 @@ export function useTabs() {
       else if (activeIndex > index) activeIndex -= 1
       else if (activeIndex === index) activeIndex = Math.min(activeIndex, tabs.length - 1)
       return { tabs, activeIndex }
+    })
+  }, [])
+
+  /**
+   * Replace an external tab's content in place, preserving its id, preview state,
+   * and position. Used by the reload flow when the file on disk has been edited
+   * outside the app — without this, external tabs would stay pinned to their
+   * open-time snapshot forever (the content is held in state, not re-read on demand).
+   * Silently no-ops if the tab isn't found or isn't external.
+   */
+  const updateExternalContent = useCallback((id: string, content: string) => {
+    setState((prev) => {
+      const idx = prev.tabs.findIndex((t) => t.id === id)
+      if (idx < 0) return prev
+      const t = prev.tabs[idx]
+      if (t.source.kind !== 'external') return prev
+      if (t.source.content === content) return prev
+      return {
+        ...prev,
+        tabs: prev.tabs.map((tab, i) =>
+          i === idx ? { ...tab, source: { ...t.source, content } } : tab,
+        ),
+      }
     })
   }, [])
 
@@ -245,6 +286,7 @@ export function useTabs() {
       canForward,
       openInRoot,
       openExternal,
+      updateExternalContent,
       close,
       closeById,
       closeActive,
@@ -266,6 +308,7 @@ export function useTabs() {
       canForward,
       openInRoot,
       openExternal,
+      updateExternalContent,
       close,
       closeById,
       closeActive,

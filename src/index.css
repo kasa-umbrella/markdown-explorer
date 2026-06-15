@@ -1,4 +1,5 @@
 :root {
+  /* Light palette — also the fallback when `data-theme` is absent. */
   --bg: #ffffff;
   --panel: #f7f8fa;
   --panel-2: #eef0f4;
@@ -7,11 +8,66 @@
   --muted: #6b7280;
   --accent: #2f6feb;
   --selected: #dce8ff;
+  /* Translucent panel-tinted overlay for FABs / dropzones / toolbars sitting over content. */
+  --panel-overlay: rgba(255, 255, 255, 0.9);
+  --panel-overlay-strong: rgba(255, 255, 255, 0.98);
+  --panel-overlay-soft: rgba(255, 255, 255, 0.75);
+  /* Tint for the gate-screen dot-grid backdrop. */
+  --grid-dot: rgba(0, 0, 0, 0.04);
+  /* Danger / error accents (used for the link-prompt and gate error states). */
+  --danger: #c0341d;
+  --danger-bg: #fff3f1;
+  /* Modal scrim. */
+  --scrim: rgba(0, 0, 0, 0.32);
+  --shadow-md: rgba(0, 0, 0, 0.1);
+  --shadow-lg: rgba(0, 0, 0, 0.18);
+  /* Search-hit highlight background. */
+  --mark: #ffe58f;
+  /* Sidebar tints for git working-tree status — kept muted so they read as
+   * "this file has changes" without overpowering the selected-row accent. */
+  --git-modified: #b08800;
+  --git-added: #1a7f37;
+  --git-deleted: #cf222e;
+  --git-renamed: #0969da;
+  --git-untracked: #6e7781;
 
   color-scheme: light;
   font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Hiragino Sans', sans-serif;
   font-size: 17px;
+}
+
+/* Dark palette. The App effect flips this on by setting `data-theme="dark"` on <html>,
+ * either because the user picked Dark in Settings or because Settings is on System and
+ * the OS reports a dark color scheme. */
+:root[data-theme='dark'] {
+  --bg: #0f1419;
+  --panel: #161b22;
+  --panel-2: #1f2933;
+  --border: #2a323c;
+  --text: #e6edf3;
+  --muted: #8b97a3;
+  /* Saturated blue that holds ≥4.5:1 contrast with both --bg (text use) and #fff
+   * (when used as a button background) — keeps `color: #fff` on .primary readable. */
+  --accent: #388bfd;
+  --selected: #1f3252;
+  --panel-overlay: rgba(20, 26, 32, 0.85);
+  --panel-overlay-strong: rgba(20, 26, 32, 0.96);
+  --panel-overlay-soft: rgba(20, 26, 32, 0.7);
+  --grid-dot: rgba(255, 255, 255, 0.05);
+  --danger: #ff7b6b;
+  --danger-bg: #321614;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow-md: rgba(0, 0, 0, 0.45);
+  --shadow-lg: rgba(0, 0, 0, 0.6);
+  --mark: #6b5b1f;
+  --git-modified: #d4a017;
+  --git-added: #3fb950;
+  --git-deleted: #f85149;
+  --git-renamed: #58a6ff;
+  --git-untracked: #8b949e;
+
+  color-scheme: dark;
 }
 
 * {
