@@ -1,16 +1,3 @@
-/** A single commit returned by gitHistory(). */
-interface MdexpGitCommit {
-  /** Full SHA. */
-  sha: string
-  /** Abbreviated SHA suitable for display. */
-  shortSha: string
-  /** Author date in strict ISO-8601 (`%aI`). */
-  dateISO: string
-  authorName: string
-  /** Commit subject (first line). */
-  subject: string
-}
-
 /** APIs exposed to the renderer by electron/preload.ts via contextBridge. */
 interface MdexpApi {
   /** Read an absolute OS path as UTF-8 text (handled in the main process). */
@@ -27,6 +14,21 @@ interface MdexpApi {
    * absolute filesystem path. Returns an unsubscribe function.
    */
   onOpenFile(handler: (path: string) => void): () => void
+  /**
+   * Subscribe to "open this folder" requests from the CLI alias
+   * (`mdexp /path/to/dir`) or macOS folder drops. The handler receives an
+   * absolute directory path. Returns an unsubscribe function.
+   */
+  onOpenDir(handler: (path: string) => void): () => void
+  /**
+   * Native-mode directory walk. Main process recursively enumerates files under
+   * `absPath` (skipping `.git`, and dotfiles when `showHidden` is false) and
+   * returns one entry per file. The renderer builds the tree on its side.
+   */
+  scanDirByPath(
+    absPath: string,
+    options: { showHidden?: boolean },
+  ): Promise<{ relPath: string; absPath: string }[]>
   /** Set the BrowserWindow opacity. Range is clamped to [0.2, 1.0] in the main process. */
   setWindowOpacity(opacity: number): void
   /** Toggle BrowserWindow.setAlwaysOnTop. */
@@ -46,25 +48,12 @@ interface MdexpApi {
   /** Close the BrowserWindow (used as the Cmd+W fallback when no tabs remain). */
   closeWindow(): void
   /**
-   * Open a native directory picker. Used as a manual fallback to learn the absolute
-   * OS path of a folder when `getPathForFile`-based auto-resolution fails (e.g. an
-   * empty root). Resolves to the chosen path, or null if the user cancelled.
-   */
-  chooseDirectory(): Promise<string | null>
-  /**
    * Return the absolute OS path of a `File` object. Works for File instances
    * obtained from FSA's `FileSystemFileHandle.getFile()`, so we can derive the
    * active root's OS path without prompting the user a second time. Returns
    * the empty string when no on-disk path is available.
    */
   getPathForFile(file: File): string
-  /**
-   * `git log --follow -- <file>` for the given absolute path. Returns commits
-   * newest-first. Resolves to an empty array if the file isn't tracked.
-   */
-  gitHistory(absoluteFilePath: string): Promise<MdexpGitCommit[]>
-  /** `git show <sha>:<file>` → the file's content at that revision. */
-  gitShow(absoluteFilePath: string, sha: string): Promise<string>
   /**
    * Snapshot of git status under the given absolute root path, returned as
    * `{ relativePath → statusCode }`. Status codes are collapsed:

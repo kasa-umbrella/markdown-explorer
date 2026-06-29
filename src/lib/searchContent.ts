@@ -1,4 +1,6 @@
+import type { FileEntry } from '../types'
 import { matchesViewable } from './extensions'
+import { readTextFile } from './fsAccess'
 
 /** One matching line within a file. */
 export interface SearchSnippet {
@@ -24,22 +26,22 @@ export interface SearchMatch {
 const MAX_SNIPPETS = 3
 
 /**
- * Read every viewable file in the handle map and cache its text, keyed by path.
- * Unreadable files are skipped silently. Reads run concurrently.
+ * Read every viewable file in the entry map and cache its text, keyed by path.
+ * Unreadable files are skipped silently. Reads run concurrently. The map values
+ * may be FSA handles or native abs-path refs — `readTextFile` dispatches.
  */
 export async function buildContentIndex(
-  files: Map<string, FileSystemFileHandle>,
+  files: Map<string, FileEntry>,
   viewable: ReadonlySet<string>,
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>()
   const tasks: Promise<void>[] = []
-  for (const [path, handle] of files) {
+  for (const [path] of files) {
     if (!matchesViewable(path, viewable)) continue
     tasks.push(
       (async () => {
         try {
-          const file = await handle.getFile()
-          index.set(path, await file.text())
+          index.set(path, await readTextFile(files, path))
         } catch {
           // Skip files that can't be read; they just won't appear in results.
         }

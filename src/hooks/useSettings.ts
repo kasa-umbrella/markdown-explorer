@@ -24,6 +24,11 @@ export interface Settings {
    * render as syntax-highlighted code. Markdown extensions are always supported on top of this.
    */
   extraExtensions: string[]
+  /**
+   * Show entries whose name begins with a dot (e.g. `.claude/`, `.github/`).
+   * Off by default — these are usually tool config / VCS state and only clutter the tree.
+   */
+  showHidden: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -34,7 +39,8 @@ export const DEFAULT_SETTINGS: Settings = {
   mainMaxWidth: 95,
   wrapCode: false,
   theme: 'system',
-  extraExtensions: ['yaml', 'yml', 'json'],
+  extraExtensions: ['yaml', 'yml', 'json', 'csv'],
+  showHidden: false,
 }
 
 export const SETTINGS_RANGES = {
@@ -84,6 +90,7 @@ function sanitize(raw: unknown): Settings {
     wrapCode: Boolean(r.wrapCode),
     theme: sanitizeTheme(r.theme),
     extraExtensions: sanitizeExtensions(r.extraExtensions),
+    showHidden: Boolean(r.showHidden),
   }
 }
 

@@ -4,7 +4,6 @@ import { useContentSearch } from './hooks/useContentSearch'
 import { useTabs, type Tab } from './hooks/useTabs'
 import { useSidebarWidth } from './hooks/useSidebarWidth'
 import { useSettings } from './hooks/useSettings'
-import { useRootAbsPath } from './hooks/useRootAbsPath'
 import { useGitStatus } from './hooks/useGitStatus'
 import { filterTree } from './lib/filterTree'
 import { buildViewableExtensions, matchesViewable } from './lib/extensions'
@@ -15,13 +14,14 @@ import { Preview, type PreviewSource } from './components/Preview'
 import { GraphView } from './components/GraphView'
 import { SettingsModal } from './components/SettingsModal'
 import iconUrl from '../build/icon.png'
+import type { FileEntry } from './types'
 import './App.css'
 
 /** Search either by file name or by file contents. */
 type SearchMode = 'name' | 'content'
 
 /** Stable empty map so the content-search hook has consistent deps before a scan. */
-const NO_FILES = new Map<string, FileSystemFileHandle>()
+const NO_FILES = new Map<string, FileEntry>()
 
 /**
  * Find the relative path of `absoluteFilePath` inside a root whose basename is `rootName`.
@@ -139,7 +139,7 @@ function collectDroppedPaths(dt: DataTransfer): string[] {
 
 function tabToSource(
   tab: Tab,
-  files: Map<string, FileSystemFileHandle> | undefined,
+  files: Map<string, FileEntry> | undefined,
 ): PreviewSource | null {
   if (tab.source.kind === 'in-root') {
     if (!files) return null
@@ -166,6 +166,10 @@ export default function App() {
   const [pendingInRootOpen, setPendingInRootOpen] = useState<PendingInRootOpen | null>(null)
   const [graphMode, setGraphMode] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  // When true, the sidebar / tab bar / settings FAB collapse so only the active
+  // preview is visible. Toggled by the focus button in the doc-path header, and
+  // exited by Esc (handler below).
+  const [focusMode, setFocusMode] = useState(false)
   // Bumped whenever the user asks to reload the active in-root tab. Threaded into
   // Preview as a load-effect dep so the same path triggers a fresh `getFile()` read.
   // External tabs sidestep this — their content lives in tab state and is mutated
@@ -178,11 +182,10 @@ export default function App() {
     () => buildViewableExtensions(settings.extraExtensions),
     [settings.extraExtensions],
   )
-  const dir = useDirectory(viewable)
-  // Auto-resolved path from the scanned files wins; the override map only kicks in
-  // when resolution failed (empty root, or running in plain-browser web mode).
-  const rootAbsPath = useRootAbsPath(dir.rootName)
-  const effectiveRootAbsPath = dir.rootAbsPath ?? rootAbsPath.absPath
+  const dir = useDirectory(viewable, settings.showHidden)
+  // Auto-resolved by fsAccess from the first scanned file. Null when running outside
+  // Electron (no webUtils bridge) or when the root has no files to sample from.
+  const effectiveRootAbsPath = dir.rootAbsPath
 
   // Bumped on each fresh scan so the git-status hook re-fetches after the user hits
   // the rescan button. Root-change refreshes are already triggered by the hook's
@@ -284,6 +287,56 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [prevTab, nextTab, back, forward, activate])
 
+  // Esc exits focus mode. Only attaches the listener while focus is active so
+  // the key stays available for other modals (PromoteModal, SettingsModal) when
+  // we're not focused.
+  useEffect(() => {
+    if (!focusMode) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFocusMode(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focusMode])
+
+  // Tie focus mode to the browser's Fullscreen API so the OS chrome (tab bar,
+  // dock, etc.) goes away too. Best-effort: if the request is rejected the CSS
+  // focus mode still applies.
+  useEffect(() => {
+    const d = document as Document & {
+      webkitFullscreenElement?: Element | null
+      webkitExitFullscreen?: () => Promise<void>
+    }
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>
+    }
+    const inFs = () => Boolean(d.fullscreenElement || d.webkitFullscreenElement)
+    if (focusMode) {
+      if (!inFs()) {
+        const req = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el)
+        req?.().catch(() => {})
+      }
+    } else if (inFs()) {
+      const exit = d.exitFullscreen?.bind(d) ?? d.webkitExitFullscreen?.bind(d)
+      exit?.().catch(() => {})
+    }
+  }, [focusMode])
+
+  // If the user leaves fullscreen via the browser (Esc, F11, native control),
+  // drop focus mode so the in-app state stays in sync.
+  useEffect(() => {
+    const d = document as Document & { webkitFullscreenElement?: Element | null }
+    const onChange = () => {
+      if (!d.fullscreenElement && !d.webkitFullscreenElement) setFocusMode(false)
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    document.addEventListener('webkitfullscreenchange', onChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      document.removeEventListener('webkitfullscreenchange', onChange)
+    }
+  }, [])
+
   // Latest values referenced inside the open-file subscription (which is set up once on mount).
   // Using refs keeps the subscription stable while still letting the handler see fresh state.
   const dirRef = useRef(dir)
@@ -365,6 +418,19 @@ export default function App() {
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [reloadActiveTab])
+
+  // CLI alias (`mdexp /some/dir`) and macOS folder drops → main process → onOpenDir.
+  // Skip the FSA picker entirely and hand the absolute path to the native-mode scan path.
+  // We deliberately bypass the `dir.status` checks here: opening a fresh folder is the
+  // user's explicit intent, regardless of whatever was loaded before.
+  const openByPath = dir.openByPath
+  useEffect(() => {
+    const api = window.mdexp
+    if (!api?.onOpenDir) return
+    return api.onOpenDir((absPath) => {
+      void openByPath(absPath)
+    })
+  }, [openByPath])
 
   // Finder "Open With" → main process → onOpenFile. If the file lives inside the currently
   // loaded root, jump straight to its in-root tab. Otherwise open it as an external tab and
@@ -579,7 +645,7 @@ export default function App() {
 
   return (
     <div
-      className={`app${dragHover ? ' drag-hover' : ''}${settings.wrapCode ? ' wrap-code' : ''}`}
+      className={`app${dragHover ? ' drag-hover' : ''}${settings.wrapCode ? ' wrap-code' : ''}${focusMode ? ' focus' : ''}`}
       style={
         {
           '--sidebar-width': `${sidebar.width}px`,
@@ -612,10 +678,28 @@ export default function App() {
                   onChange={(e) => setQuery(e.target.value)}
                 />
                 <button className="icon-btn" title="読み直す" onClick={() => dir.rescan()}>
-                  ⟳
+                  <svg
+                    className="icon-btn-svg"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                    aria-hidden
+                  >
+                    <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4a8 8 0 1 0 7.74 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                  </svg>
                 </button>
                 <button className="icon-btn" title="別のフォルダを開く" onClick={() => dir.choose()}>
-                  📂
+                  <svg
+                    className="icon-btn-svg"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                    aria-hidden
+                  >
+                    <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" />
+                  </svg>
                 </button>
                 <button
                   className={`icon-btn${graphMode ? ' active' : ''}`}
@@ -623,7 +707,16 @@ export default function App() {
                   aria-pressed={graphMode}
                   onClick={() => setGraphMode((g) => !g)}
                 >
-                  🕸
+                  <svg
+                    className="icon-btn-svg"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                    aria-hidden
+                  >
+                    <path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z" />
+                  </svg>
                 </button>
               </div>
               <div className="mode-toggle" role="group" aria-label="検索モード">
@@ -709,12 +802,11 @@ export default function App() {
                 onForward={tabs.forward}
                 canBack={tabs.canBack}
                 canForward={tabs.canForward}
-                rootAbsPath={effectiveRootAbsPath}
-                rootName={dir.rootName}
-                onLinkRoot={rootAbsPath.link}
                 onOpenExternalPath={openExternalByPath}
                 onReload={reloadActiveTab}
                 reloadCounter={reloadCounter}
+                focusMode={focusMode}
+                onToggleFocus={() => setFocusMode((f) => !f)}
               />
             ) : dir.status === 'ready' ? (
               <Preview
@@ -724,9 +816,6 @@ export default function App() {
                 onForward={tabs.forward}
                 canBack={false}
                 canForward={false}
-                rootAbsPath={effectiveRootAbsPath}
-                rootName={dir.rootName}
-                onLinkRoot={rootAbsPath.link}
                 onOpenExternalPath={openExternalByPath}
                 onReload={reloadActiveTab}
                 reloadCounter={reloadCounter}
@@ -739,7 +828,11 @@ export default function App() {
         {dragHover && (
           <div className="drop-overlay" aria-hidden>
             <div className="drop-overlay-inner">
-              <div className="drop-icon">📥</div>
+              <div className="drop-icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+                  <path d="M19 3H5c-1.11 0-2 .89-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.11-.89-2-2-2zm0 12h-4c0 1.66-1.35 3-3 3s-3-1.34-3-3H5V5h14v10zm-3-5h-2V7h-4v3H8l4 4 4-4z" />
+                </svg>
+              </div>
               <div>ファイルをここに、ドロップ</div>
             </div>
           </div>

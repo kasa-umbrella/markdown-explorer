@@ -1,7 +1,7 @@
 // The main process is emitted as ESM (.js). Electron's ESM loader can't resolve the
 // named exports of the built-in electron module, so we use createRequire to CJS-require the API.
 import { createRequire } from 'node:module'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import type ElectronModule from 'electron'
 
 const require = createRequire(import.meta.url)
-const { app, BrowserWindow, dialog, ipcMain, protocol, net, session } =
+const { app, BrowserWindow, ipcMain, protocol, net, session } =
   require('electron') as typeof ElectronModule
 
 const execFileP = promisify(execFile)
@@ -28,19 +28,6 @@ function simplifyStatus(xy: string): 'M' | 'A' | 'D' | 'R' | 'U' | null {
   if (xy[0] === 'R' || xy[1] === 'R') return 'R'
   if (xy[0] === 'M' || xy[1] === 'M') return 'M'
   return null
-}
-
-/**
- * Resolve the git toplevel directory for a file by running `git rev-parse` in its parent dir.
- * Returns null when the file isn't tracked under any repository (or git isn't installed).
- */
-async function gitToplevelOf(absoluteFilePath: string): Promise<string | null> {
-  try {
-    const { stdout } = await execFileP('git', ['-C', path.dirname(absoluteFilePath), 'rev-parse', '--show-toplevel'])
-    return stdout.trim() || null
-  } catch {
-    return null
-  }
 }
 
 // Roots as seen from dist-electron/main.js
@@ -69,20 +56,103 @@ let win: BrowserWindow | null = null
 // on a cold launch, so the handler must be registered at module top, and incoming paths
 // must be queued until the renderer is loaded and ready to receive them.
 const pendingOpenPaths: string[] = []
+/**
+ * Same queueing strategy as pendingOpenPaths, but for *folders* — passed via the CLI
+ * alias (`mdexp /path/to/dir` → `open -a markdown-explorer --args /path/to/dir`) or
+ * via macOS folder-drops once Info.plist declares `public.folder` support.
+ */
+const pendingOpenDirs: string[] = []
 let rendererReady = false
 
-function flushPendingOpens(): void {
+function flushPending(): void {
   if (!rendererReady || !win) return
   while (pendingOpenPaths.length > 0) {
     const p = pendingOpenPaths.shift()!
     win.webContents.send('mdexp:open-file', p)
   }
+  while (pendingOpenDirs.length > 0) {
+    const p = pendingOpenDirs.shift()!
+    win.webContents.send('mdexp:open-dir', p)
+  }
 }
 
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
-  pendingOpenPaths.push(filePath)
-  flushPendingOpens()
+  // macOS also fires `open-file` for folder drops onto the dock icon / app bundle,
+  // so we route by stat'ing the path and queueing into the right bucket. We don't
+  // await here because the event handler is sync — the routing finishes by the time
+  // the renderer asks for a flush.
+  void routeIncomingPath(filePath)
+})
+
+/**
+ * stat the path and decide which queue it belongs to. Silently drops paths that
+ * don't exist or can't be reached — there's nothing useful we can show for those.
+ */
+async function routeIncomingPath(p: string): Promise<void> {
+  try {
+    const s = await stat(p)
+    if (s.isDirectory()) {
+      pendingOpenDirs.push(p)
+    } else {
+      pendingOpenPaths.push(p)
+    }
+    flushPending()
+  } catch {
+    // ENOENT etc. — nothing to open.
+  }
+}
+
+/**
+ * Pick the first argv entry that looks like an absolute path to something on disk.
+ * We can't rely on positional indices because Electron prepends its own switches
+ * (`--remote-debugging-port=…`, etc.) and the dev launcher passes `.` as the app
+ * directory. Iterating and filtering by existence keeps the heuristic robust.
+ *
+ * Skipped in dev mode entirely — vite-plugin-electron passes the project root as
+ * argv[1], which would otherwise be misread as a CLI-supplied folder and load the
+ * source tree as the active root every time `npm run dev` ran.
+ */
+async function findPathInArgv(argv: readonly string[]): Promise<string | null> {
+  if (DEV_SERVER_URL) return null
+  // argv[0] is always the executable; everything after that could be a path.
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i]
+    if (!arg || arg.startsWith('-')) continue
+    if (!path.isAbsolute(arg)) continue
+    // The app's own bundled root looks like a real folder to `stat`, but it's never
+    // what the user meant to open — guard against the production case where the OS
+    // re-passes the .app bundle path as argv[1].
+    if (arg === APP_ROOT) continue
+    try {
+      await stat(arg)
+      return arg
+    } catch {
+      // Not a real path — keep looking.
+    }
+  }
+  return null
+}
+
+// Enforce single-instance so the CLI alias's second invocation activates the existing
+// window with the new path instead of spawning a duplicate app. The lock has to be
+// requested before any window is created (i.e. synchronously here at module top).
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+}
+
+app.on('second-instance', (_event, argv) => {
+  // A second `mdexp /foo` arrived. Pull the path out of the new argv, route into the
+  // pending queue, and focus the existing window so the user sees the result.
+  void (async () => {
+    const incoming = await findPathInArgv(argv)
+    if (incoming) await routeIncomingPath(incoming)
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })()
 })
 
 function createWindow(): void {
@@ -104,7 +174,7 @@ function createWindow(): void {
 
   win.webContents.on('did-finish-load', () => {
     rendererReady = true
-    flushPendingOpens()
+    flushPending()
   })
 
   // Cmd/Ctrl+W normally closes the window via the default app menu accelerator.
@@ -143,7 +213,51 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+/**
+ * Recursively walk `absoluteRoot` for the native-mode scan IPC. Returns a flat
+ * list of `{ relPath, absPath }` for every file under the root (directories are
+ * inferred on the renderer side). Mirrors the FSA walker's exclusions: `.git` is
+ * always skipped, and dot-prefixed entries are skipped unless `showHidden`.
+ *
+ * Errors on individual subtrees (permission denied, broken symlinks, etc.) are
+ * swallowed — the same way the FSA path silently drops anything the browser
+ * refuses to enumerate.
+ */
+async function walkDirectory(
+  absoluteRoot: string,
+  options: { showHidden: boolean },
+): Promise<{ relPath: string; absPath: string }[]> {
+  const entries: { relPath: string; absPath: string }[] = []
+  const normalizedRoot = absoluteRoot.replace(/[/\\]+$/, '')
+
+  async function walk(dirAbs: string, prefix: string): Promise<void> {
+    let children
+    try {
+      children = await readdir(dirAbs, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const child of children) {
+      const name = child.name
+      if (name === '.git') continue
+      if (!options.showHidden && name.startsWith('.')) continue
+      const relPath = prefix ? `${prefix}/${name}` : name
+      const absChild = path.join(dirAbs, name)
+      if (child.isDirectory()) {
+        await walk(absChild, relPath)
+      } else if (child.isFile()) {
+        entries.push({ relPath, absPath: absChild })
+      }
+      // Skip symlinks / sockets / etc. — same posture as the FSA walker, which
+      // only sees `file` and `directory` from the AsyncIterable.
+    }
+  }
+
+  await walk(normalizedRoot, '')
+  return entries
+}
+
+app.whenReady().then(async () => {
   // The key to making "no-click restore" of the last folder work.
   // Browsers don't persist File System Access permissions across sessions,
   // so handle.queryPermission returns 'prompt' on every launch.
@@ -187,6 +301,29 @@ app.whenReady().then(() => {
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
   })
 
+  // Recursive walk for native-mode scans (CLI alias / open-folder entry points).
+  // The renderer turns the flat result into the tree shape the sidebar expects.
+  ipcMain.handle(
+    'mdexp:scan-dir-by-path',
+    async (_e, rawPath: unknown, rawOptions: unknown) => {
+      if (typeof rawPath !== 'string' || !path.isAbsolute(rawPath)) {
+        throw new Error('expected an absolute directory path')
+      }
+      const showHidden =
+        typeof rawOptions === 'object' &&
+        rawOptions !== null &&
+        'showHidden' in rawOptions &&
+        Boolean((rawOptions as { showHidden?: unknown }).showHidden)
+      try {
+        const s = await stat(rawPath)
+        if (!s.isDirectory()) throw new Error('path is not a directory')
+      } catch (err) {
+        throw new Error(`cannot read directory: ${String(err)}`, { cause: err })
+      }
+      return walkDirectory(rawPath, { showHidden })
+    },
+  )
+
   // Window-level settings driven by the renderer's settings UI.
   ipcMain.on('mdexp:set-opacity', (_e, opacity: unknown) => {
     if (!win) return
@@ -204,42 +341,6 @@ app.whenReady().then(() => {
   // Fallback close used when the renderer has no tabs left to close on Cmd+W.
   ipcMain.on('mdexp:close-window', () => {
     win?.close()
-  })
-
-  // Native directory picker — used by the renderer to learn the absolute OS path
-  // of the active root (the File System Access picker only exposes a handle / basename,
-  // which isn't enough to run git against). Returns the chosen path or null on cancel.
-  ipcMain.handle('mdexp:choose-directory', async () => {
-    if (!win) return null
-    const r = await dialog.showOpenDialog(win, {
-      properties: ['openDirectory'],
-      title: 'フォルダの場所を選んでください',
-    })
-    if (r.canceled || r.filePaths.length === 0) return null
-    return r.filePaths[0]
-  })
-
-  // List the commit history that touched a specific file, newest first.
-  // `--follow` keeps the chain across renames. Records are delimited with the ASCII
-  // record-separator so subjects can safely contain newlines, tabs, etc.
-  ipcMain.handle('mdexp:git-history', async (_e, filePath: unknown) => {
-    if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
-      throw new Error('expected an absolute file path')
-    }
-    const top = await gitToplevelOf(filePath)
-    if (!top) return []
-    const rel = path.relative(top, filePath)
-    const FMT = '%H%x1f%h%x1f%aI%x1f%an%x1f%s%x1e'
-    const { stdout } = await execFileP(
-      'git',
-      ['-C', top, 'log', '--follow', `--format=${FMT}`, '--', rel],
-      { maxBuffer: 32 * 1024 * 1024 },
-    )
-    const rows = stdout.split('\x1e').map((r) => r.replace(/^\n+/, '')).filter(Boolean)
-    return rows.map((r) => {
-      const [sha, shortSha, dateISO, authorName, subject] = r.split('\x1f')
-      return { sha, shortSha, dateISO, authorName, subject }
-    })
   })
 
   // Porcelain git status for the active root, returned as `{ path → status }`.
@@ -308,25 +409,11 @@ app.whenReady().then(() => {
     }
   })
 
-  // Read a file's content at a specific revision (`git show <sha>:<rel>`).
-  // SHA is validated to a hex string so it can be safely interpolated into the ref.
-  ipcMain.handle('mdexp:git-show', async (_e, filePath: unknown, sha: unknown) => {
-    if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
-      throw new Error('expected an absolute file path')
-    }
-    if (typeof sha !== 'string' || !/^[0-9a-f]{4,40}$/i.test(sha)) {
-      throw new Error('invalid sha')
-    }
-    const top = await gitToplevelOf(filePath)
-    if (!top) throw new Error('not a git repository')
-    const rel = path.relative(top, filePath)
-    const { stdout } = await execFileP(
-      'git',
-      ['-C', top, 'show', `${sha}:${rel}`],
-      { maxBuffer: 64 * 1024 * 1024 },
-    )
-    return stdout
-  })
+  // Cold-launch CLI: if `mdexp /some/dir` started the app, capture that path now so
+  // it's queued before the renderer asks for a flush. routeIncomingPath stats the
+  // path itself, so the file-vs-folder distinction is already handled.
+  const initialPath = await findPathInArgv(process.argv)
+  if (initialPath) await routeIncomingPath(initialPath)
 
   createWindow()
 

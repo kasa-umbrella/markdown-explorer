@@ -15,6 +15,11 @@ export function isMarkdownPath(path: string): boolean {
   return MARKDOWN_EXT_RE.test(path)
 }
 
+/** True when the file's extension is CSV. Used to route CSV files to the table viewer. */
+export function isCsvPath(path: string): boolean {
+  return getExtension(path) === 'csv'
+}
+
 /** True when the file's extension is in the viewable set. */
 export function matchesViewable(path: string, viewable: ReadonlySet<string>): boolean {
   const ext = getExtension(path)

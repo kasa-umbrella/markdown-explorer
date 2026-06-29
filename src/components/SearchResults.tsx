@@ -38,7 +38,11 @@ export function SearchResults({ matches, query, selectedPath, onSelect, onActiva
             title={m.path}
           >
             <div className="result-head">
-              <span className="icon">📄</span>
+              <span className="icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z" />
+                </svg>
+              </span>
               <span className="label">{m.name}</span>
               <span className="badge" title={`${m.total} 行ヒット`}>
                 {m.total}

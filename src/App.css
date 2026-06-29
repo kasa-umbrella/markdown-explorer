@@ -7,6 +7,20 @@
   overflow: hidden;
 }
 
+/* Focus mode: only the active preview pane is visible. The sidebar, resize
+   handle, tab bar, and settings FAB all step aside; Esc (handled in App.tsx)
+   restores the regular layout. */
+.app.focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app.focus > .sidebar,
+.app.focus > .resize-handle,
+.app.focus .tab-bar,
+.app.focus > .settings-fab {
+  display: none;
+}
+
 .resize-handle {
   cursor: col-resize;
   background: transparent;
@@ -109,14 +123,15 @@ body.resizing .resize-handle {
   justify-content: center;
   width: 30px;
   padding: 0;
-  font-size: 14px;
-  /* Emoji glyphs sit on the text baseline by default, which pushes them down-right
-     inside a small button. Centering via flex + line-height: 1 lines them up cleanly. */
   line-height: 1;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+
+.icon-btn-svg {
+  display: block;
 }
 
 .icon-btn:hover {
@@ -198,7 +213,16 @@ body.resizing .resize-handle {
 
 .result-head .icon {
   flex: none;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.result.selected .result-head .icon {
+  color: var(--accent);
 }
 
 .result-head .label {
@@ -289,7 +313,16 @@ body.resizing .resize-handle {
 
 .row .icon {
   flex: none;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.row.file.selected .icon {
+  color: var(--accent);
 }
 
 .row .label {
@@ -393,7 +426,16 @@ body.resizing .resize-handle {
 
 .tab-icon {
   flex: none;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.tab.active .tab-icon {
+  color: var(--accent);
 }
 
 .tab-label {
@@ -462,7 +504,10 @@ body.resizing .resize-handle {
 }
 
 .drop-icon {
-  font-size: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
 }
 
 /* Swipe-back / swipe-forward progress indicator (drag-follow). */
@@ -523,6 +568,9 @@ body.resizing .resize-handle {
 }
 
 .nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 26px;
   height: 24px;
   padding: 0;
@@ -533,6 +581,10 @@ body.resizing .resize-handle {
   border: 1px solid transparent;
   border-radius: 6px;
   cursor: pointer;
+}
+
+.nav-btn-svg {
+  display: block;
 }
 
 .nav-btn:hover:not(:disabled) {
@@ -546,11 +598,32 @@ body.resizing .resize-handle {
   cursor: default;
 }
 
+.nav-btn.active {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+/* Pinned to the right edge of the doc-path so it doesn't crowd the path text. */
+.focus-btn {
+  margin-left: auto;
+}
+
 .path-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.path-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
 }
 
 .preview.empty,
@@ -670,142 +743,6 @@ body.resizing .resize-handle {
   border: 1px solid var(--border);
   border-radius: 999px;
   pointer-events: none;
-}
-
-/* ───────── Time machine (git history slider) ───────── */
-/* Lives directly inside .preview (the scroll container), so it sits between
-   the sticky doc-path header and the markdown body. */
-.time-btn {
-  margin-left: auto;
-  flex: none;
-}
-
-.time-btn.active {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.time-badge {
-  flex: none;
-  padding: 2px 8px;
-  font-size: 11px;
-  color: var(--accent);
-  background: var(--selected);
-  border-radius: 999px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.time-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
-.time-bar-prompt {
-  justify-content: space-between;
-}
-
-.time-bar-error {
-  color: var(--danger);
-  background: var(--danger-bg);
-}
-
-.time-bar-msg {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.time-link-btn {
-  padding: 6px 12px;
-  font-size: 12px;
-}
-
-.time-step-btn {
-  flex: none;
-  width: 28px;
-  height: 26px;
-  padding: 0;
-  font-size: 16px;
-  line-height: 1;
-  color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.time-step-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.time-slider {
-  flex: 1 1 220px;
-  min-width: 140px;
-  accent-color: var(--accent);
-}
-
-.time-label {
-  flex: 2 1 260px;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text);
-}
-
-.time-label-now {
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.time-label-commit {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.time-sha {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.time-subject {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.time-now-btn {
-  flex: none;
-  padding: 4px 10px;
-  font-size: 11px;
-  color: var(--accent);
-  background: var(--selected);
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.time-range {
-  flex: 1 0 100%;
-  display: flex;
-  justify-content: space-between;
-  margin-top: -2px;
-  padding: 0 4px;
-  font-size: 10px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ───────── Settings (floating button + modal) ───────── */
@@ -1145,6 +1082,80 @@ body.resizing .resize-handle {
   border-radius: 6px;
 }
 
+/* ───────── Frontmatter (YAML) key/value table ─────────
+   Rendered at the top of a document when the source begins with a
+   `---`-delimited YAML block. Mirrors GitHub's two-column layout:
+   keys on the left, values on the right; nested objects nest. */
+.markdown-body .frontmatter-table {
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0 0 1.2em 0;
+  font-size: 0.92em;
+  background: var(--panel-2);
+  overflow: hidden;
+  width: auto;
+  max-width: 100%;
+}
+
+.markdown-body .frontmatter-table th,
+.markdown-body .frontmatter-table td {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+}
+
+.markdown-body .frontmatter-table > tbody > tr > th {
+  background: var(--panel);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  width: 1%;
+}
+
+.markdown-body .frontmatter-table > tbody > tr > td {
+  background: transparent;
+  word-break: break-word;
+}
+
+/* Nested table inside a value cell — flatten the outer chrome so it reads as
+   part of the parent row rather than a free-standing table. */
+.markdown-body .frontmatter-table .frontmatter-nested {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 1em;
+}
+
+.markdown-body .frontmatter-table .frontmatter-nested th,
+.markdown-body .frontmatter-table .frontmatter-nested td {
+  border: 1px dashed var(--border);
+}
+
+.markdown-body .frontmatter-list {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.markdown-body .frontmatter-multiline {
+  white-space: pre-wrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.95em;
+  display: inline-block;
+}
+
+.markdown-body .frontmatter-null {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.markdown-body .frontmatter-scalar {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.95em;
+}
+
 .markdown-body hr {
   border: 0;
   border-top: 1px solid var(--border);
@@ -1161,12 +1172,27 @@ body.resizing .resize-handle {
 }
 
 /* ───────── Mermaid diagrams ───────── */
-/* Hide the raw fenced source until the post-render swap replaces it with SVG. */
+/* Hide the raw fenced source until the post-render swap replaces it with SVG.
+ * The Preview swaps the <pre> for a host <div> synchronously, so this only
+ * applies for the microtask between innerHTML commit and the mermaid effect. */
 .markdown-body pre:has(> code.language-mermaid) {
   visibility: hidden;
   min-height: 40px;
   background: var(--panel-2);
   border: 1px dashed var(--border);
+}
+
+/* While the host is waiting for its async render, show the same dashed-border
+ * placeholder so the layout doesn't shift when the SVG arrives. The
+ * `:not(.mermaid-flow-host)` guard keeps flowcharts (which paint their own
+ * canvas immediately on mount) from picking up the placeholder treatment. */
+.markdown-body div[data-mermaid-status='pending']:not(.mermaid-flow-host),
+.markdown-body div[data-mermaid-status='rendering']:not(.mermaid-flow-host) {
+  min-height: 40px;
+  margin: 1em 0;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
 }
 
 .markdown-body .mermaid {
@@ -1327,4 +1353,98 @@ body.resizing .resize-handle {
 }
 :root[data-theme='dark'] .hljs-strong {
   font-weight: 700;
+}
+
+/* ───────── CSV table viewer ───────── */
+.csv-table-wrap {
+  /* Let wide CSVs scroll horizontally inside the preview without dragging the
+     whole document sideways. Keep a generous bottom buffer so the last row's
+     focus ring isn't clipped against the scroll container's edge. */
+  max-width: 100%;
+  overflow: auto;
+  margin: 0 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.csv-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.csv-table th,
+.csv-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.csv-table th:last-child,
+.csv-table td:last-child {
+  border-right: none;
+}
+
+.csv-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.csv-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-2);
+  font-weight: 600;
+  z-index: 1;
+}
+
+.csv-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--panel) 50%, transparent);
+}
+
+.csv-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.csv-table tbody tr.csv-row-checked td {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.csv-check-col {
+  width: 36px;
+  text-align: center !important;
+  padding: 6px 8px;
+  background: var(--panel);
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
+.csv-table thead .csv-check-col {
+  /* Header check-col needs to sit above body check-cols (sticky-left) AND above
+     other header cells (sticky-top) when the user scrolls both axes. */
+  z-index: 3;
+  background: var(--panel-2);
+}
+
+.csv-table tbody tr.csv-row-checked .csv-check-col {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
+.csv-check {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.csv-empty {
+  color: var(--muted);
+  padding: 16px;
 }

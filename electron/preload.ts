@@ -45,6 +45,45 @@ function onOpenFile(handler: (path: string) => void): () => void {
   }
 }
 
+// Open-directory delivery (CLI alias / folder drop). Same buffer-and-replay pattern
+// as onOpenFile, but on a separate channel so the renderer can route folders into
+// the directory-load flow instead of the per-file open flow.
+let pendingOpenDirs: string[] = []
+const openDirHandlers = new Set<(path: string) => void>()
+
+ipcRenderer.on('mdexp:open-dir', (_event, dirPath: string) => {
+  if (openDirHandlers.size === 0) {
+    pendingOpenDirs.push(dirPath)
+    return
+  }
+  for (const handler of openDirHandlers) handler(dirPath)
+})
+
+function onOpenDir(handler: (path: string) => void): () => void {
+  openDirHandlers.add(handler)
+  if (pendingOpenDirs.length > 0) {
+    const drained = pendingOpenDirs
+    pendingOpenDirs = []
+    for (const p of drained) handler(p)
+  }
+  return () => {
+    openDirHandlers.delete(handler)
+  }
+}
+
+/**
+ * Native-mode directory walk: ask main to enumerate every file under `absPath`
+ * and return a flat list of `{ relPath, absPath }`. Honors the same `showHidden`
+ * semantics as the FSA walker (dotfiles excluded by default; `.git` always
+ * excluded). The renderer turns this into the sidebar tree.
+ */
+async function scanDirByPath(
+  absPath: string,
+  options: { showHidden?: boolean },
+): Promise<{ relPath: string; absPath: string }[]> {
+  return ipcRenderer.invoke('mdexp:scan-dir-by-path', absPath, options)
+}
+
 function setWindowOpacity(opacity: number): void {
   ipcRenderer.send('mdexp:set-opacity', opacity)
 }
@@ -86,15 +125,6 @@ function closeWindow(): void {
 }
 
 /**
- * Open a native directory picker and return the chosen absolute path (or null on cancel).
- * The renderer uses this to learn the OS path of the active root — the File System Access
- * picker only yields a handle / basename, which isn't enough for git operations.
- */
-async function chooseDirectory(): Promise<string | null> {
-  return ipcRenderer.invoke('mdexp:choose-directory')
-}
-
-/**
  * Resolve the absolute OS path of a File object. Works for File instances obtained
  * from `<input type=file>`, drag-drop, and — crucially for us — `FileSystemFileHandle.getFile()`.
  * Returns the empty string when Electron can't resolve a path (e.g. a synthesized File
@@ -102,22 +132,6 @@ async function chooseDirectory(): Promise<string | null> {
  */
 function getPathForFile(file: File): string {
   return webUtils.getPathForFile(file)
-}
-
-interface GitCommit {
-  sha: string
-  shortSha: string
-  dateISO: string
-  authorName: string
-  subject: string
-}
-
-async function gitHistory(absoluteFilePath: string): Promise<GitCommit[]> {
-  return ipcRenderer.invoke('mdexp:git-history', absoluteFilePath)
-}
-
-async function gitShow(absoluteFilePath: string, sha: string): Promise<string> {
-  return ipcRenderer.invoke('mdexp:git-show', absoluteFilePath, sha)
 }
 
 type GitStatusCode = 'M' | 'A' | 'D' | 'R' | 'U'
@@ -137,14 +151,13 @@ contextBridge.exposeInMainWorld('mdexp', {
   readTextFileByPath,
   readBinaryFileByPath,
   onOpenFile,
+  onOpenDir,
+  scanDirByPath,
   setWindowOpacity,
   setAlwaysOnTop,
   onCloseActiveTab,
   onReloadActiveTab,
   closeWindow,
-  chooseDirectory,
   getPathForFile,
-  gitHistory,
-  gitShow,
   gitStatus,
 })

@@ -11,12 +11,26 @@ export interface TreeNode {
   hasViewable?: boolean
 }
 
+/**
+ * Reference to a single file inside the scanned root.
+ *
+ * Two backends produce scans:
+ *   - the FSA picker hands us `FileSystemFileHandle`s straight from the browser API
+ *   - the Electron CLI / "open this folder" entry point walks the disk via Node and
+ *     produces lightweight `{ kind:'native', absPath }` records instead
+ *
+ * `lib/fsAccess.ts`'s read helpers dispatch on which shape they got, so callers can
+ * treat the `files` map opaquely.
+ */
+export type NativeFileRef = { kind: 'native'; absPath: string }
+export type FileEntry = FileSystemFileHandle | NativeFileRef
+
 /** Result of scanning a folder. */
 export interface ScanResult {
   /** Tree for the sidebar (directories and viewable files only) */
   tree: TreeNode
-  /** Handles for all files. Keyed by path relative to the root. Includes non-viewable files such as images. */
-  files: Map<string, FileSystemFileHandle>
+  /** Refs for all files (FSA handle or native abs path). Keyed by path relative to the root. */
+  files: Map<string, FileEntry>
   /** Total number of viewable files found during the scan */
   viewableCount: number
 }
