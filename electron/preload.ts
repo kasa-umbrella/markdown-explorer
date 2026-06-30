@@ -147,6 +147,70 @@ async function gitStatus(
   return ipcRenderer.invoke('mdexp:git-status', absoluteRootPath)
 }
 
+// ── Detached presenter window (dual-screen) ──
+// The main window opens/closes a second window and pushes the deck + current slide
+// into it; the presenter window sends navigation commands back. Main relays both
+// directions, so neither renderer needs a direct handle on the other.
+
+/** Main window → ask main to open (or focus) the presenter window. */
+function presenterOpen(): void {
+  ipcRenderer.send('mdexp:presenter-open')
+}
+
+/** Main window → ask main to close the presenter window. */
+function presenterClose(): void {
+  ipcRenderer.send('mdexp:presenter-close')
+}
+
+/** Main window → presenter window: push a deck-init or index-update message. */
+function sendToPresenter(msg: unknown): void {
+  ipcRenderer.send('mdexp:to-presenter', msg)
+}
+
+const toPresenterHandlers = new Set<(msg: unknown) => void>()
+ipcRenderer.on('mdexp:presenter-msg', (_e, msg: unknown) => {
+  for (const handler of toPresenterHandlers) handler(msg)
+})
+
+/** Presenter window: subscribe to deck / index pushes from the main window. */
+function onToPresenter(handler: (msg: unknown) => void): () => void {
+  toPresenterHandlers.add(handler)
+  return () => {
+    toPresenterHandlers.delete(handler)
+  }
+}
+
+/** Presenter window → main window: send a navigation / exit / ready command. */
+function sendToMain(msg: unknown): void {
+  ipcRenderer.send('mdexp:to-main', msg)
+}
+
+const toMainHandlers = new Set<(msg: unknown) => void>()
+ipcRenderer.on('mdexp:main-msg', (_e, msg: unknown) => {
+  for (const handler of toMainHandlers) handler(msg)
+})
+
+/** Main window: subscribe to commands coming back from the presenter window. */
+function onToMain(handler: (msg: unknown) => void): () => void {
+  toMainHandlers.add(handler)
+  return () => {
+    toMainHandlers.delete(handler)
+  }
+}
+
+const presenterClosedHandlers = new Set<() => void>()
+ipcRenderer.on('mdexp:presenter-closed', () => {
+  for (const handler of presenterClosedHandlers) handler()
+})
+
+/** Main window: subscribe to the presenter window being closed (by the user). */
+function onPresenterClosed(handler: () => void): () => void {
+  presenterClosedHandlers.add(handler)
+  return () => {
+    presenterClosedHandlers.delete(handler)
+  }
+}
+
 contextBridge.exposeInMainWorld('mdexp', {
   readTextFileByPath,
   readBinaryFileByPath,
@@ -160,4 +224,11 @@ contextBridge.exposeInMainWorld('mdexp', {
   closeWindow,
   getPathForFile,
   gitStatus,
+  presenterOpen,
+  presenterClose,
+  sendToPresenter,
+  onToPresenter,
+  sendToMain,
+  onToMain,
+  onPresenterClosed,
 })

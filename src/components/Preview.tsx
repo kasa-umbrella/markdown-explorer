@@ -743,50 +743,52 @@ export function Preview({
             </span>
           )}
           <span className="path-text">{headerText}</span>
-          {onPresent && isMarkdownSource && (
-            <button
-              className="nav-btn present-btn"
-              onClick={() => onPresent()}
-              title="プレゼン: 見出しごとにスライド表示 (⌘P)"
-              aria-label="プレゼンを開始"
-            >
-              <svg
-                className="nav-btn-svg"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="currentColor"
-                aria-hidden
+          <div className="doc-actions">
+            {onPresent && isMarkdownSource && (
+              <button
+                className="nav-btn present-btn"
+                onClick={() => onPresent()}
+                title="プレゼン: 見出しごとにスライド表示 (⌘P)"
+                aria-label="プレゼンを開始"
               >
-                {/* Material "slideshow": a play triangle inside a screen frame. */}
-                <path d="M10 8v8l5-4-5-4zm9-5H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z" />
-              </svg>
-            </button>
-          )}
-          {onToggleFocus && (
-            <button
-              className={`nav-btn focus-btn${focusMode ? ' active' : ''}`}
-              onClick={() => onToggleFocus()}
-              title={focusMode ? '集中モードを解除 (Esc)' : '集中モード: このウィンドウだけ全画面'}
-              aria-pressed={focusMode}
-              aria-label={focusMode ? '集中モードを解除' : '集中モード'}
-            >
-              <svg
-                className="nav-btn-svg"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="currentColor"
-                aria-hidden
+                <svg
+                  className="nav-btn-svg"
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  {/* Material "slideshow": a play triangle inside a screen frame. */}
+                  <path d="M10 8v8l5-4-5-4zm9-5H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z" />
+                </svg>
+              </button>
+            )}
+            {onToggleFocus && (
+              <button
+                className={`nav-btn focus-btn${focusMode ? ' active' : ''}`}
+                onClick={() => onToggleFocus()}
+                title={focusMode ? '集中モードを解除 (Esc)' : '集中モード: このウィンドウだけ全画面'}
+                aria-pressed={focusMode}
+                aria-label={focusMode ? '集中モードを解除' : '集中モード'}
               >
-                {focusMode ? (
-                  <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
-                ) : (
-                  <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
-                )}
-              </svg>
-            </button>
-          )}
+                <svg
+                  className="nav-btn-svg"
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  {focusMode ? (
+                    <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+                  ) : (
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                  )}
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
         {csvText !== null ? (
           <CsvTable

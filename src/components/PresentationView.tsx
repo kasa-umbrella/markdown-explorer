@@ -1,23 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildDeck, type SplitStrategy } from '../lib/slides'
-import { readBlobUrl } from '../lib/fsAccess'
-import {
-  guessMimeFromPath,
-  isExternalUrl,
-  resolveAbsoluteRelative,
-  resolveRelative,
-} from '../lib/paths'
-import { renderMermaid } from '../lib/mermaid'
-import type { FileEntry } from '../types'
+import { isExternalUrl } from '../lib/paths'
+import { enrichSlide, fmtClock, type PresentCtx } from '../lib/slideDom'
+import { portableizeDeck, type PortableDeck } from '../lib/portableDeck'
 
-/**
- * What the presenter needs to resolve a slide's relative images. Mirrors the two
- * source kinds the Preview understands: an in-root file (resolve via the scan's
- * handle map) or an externally-opened file (resolve via its on-disk path + IPC).
- */
-export type PresentCtx =
-  | { kind: 'in-root'; path: string; files: Map<string, FileEntry> }
-  | { kind: 'external'; absolutePath: string | null }
+// Re-exported so existing importers (App) keep getting the type from here.
+export type { PresentCtx } from '../lib/slideDom'
 
 interface Props {
   /** Raw markdown of the slide deck source. */
@@ -31,122 +19,29 @@ interface Props {
 }
 
 /**
- * Post-render enrichment for a freshly-injected slide DOM: wrap tables, mark
- * external links, resolve relative images to Blob URLs, and render mermaid blocks
- * to static SVG.
+ * Full-window presentation overlay built live from the active markdown. Headings
+ * (or `---`) become slides; arrow keys / space / click advance; `Esc` exits.
  *
- * This deliberately parallels (a simpler, static-only subset of) the post-render
- * effects in Preview.tsx. The reading view needs interactive React-Flow charts and
- * StrictMode-safe retry bookkeeping; a slide only needs a one-shot static render,
- * so keeping a separate, smaller routine here avoids dragging that machinery — and
- * Preview's in-flight mermaid debugging — into the deck. Returns a cleanup that
- * revokes any Blob URLs it created.
- */
-function enrichSlide(el: HTMLElement, ctx: PresentCtx, isCancelled: () => boolean): () => void {
-  const created: string[] = []
-  const api = window.mdexp
-
-  // Tables scroll on their own so a wide one never pushes the slide sideways.
-  for (const table of Array.from(el.querySelectorAll('table'))) {
-    if (table.parentElement?.classList.contains('table-wrap')) continue
-    if (table.classList.contains('frontmatter-table')) continue
-    const wrap = document.createElement('div')
-    wrap.className = 'table-wrap'
-    table.replaceWith(wrap)
-    wrap.appendChild(table)
-  }
-
-  // External links open in the browser; in-root links are inert during a deck
-  // (handled by the stage click handler, which swallows their default nav).
-  for (const a of Array.from(el.querySelectorAll('a'))) {
-    if (isExternalUrl(a.getAttribute('href') ?? '')) {
-      a.setAttribute('target', '_blank')
-      a.setAttribute('rel', 'noopener noreferrer')
-    }
-  }
-
-  // Relative images → Blob URLs.
-  for (const img of Array.from(el.querySelectorAll('img'))) {
-    const raw = img.getAttribute('src') ?? ''
-    if (!raw || isExternalUrl(raw)) continue
-    if (ctx.kind === 'in-root') {
-      const target = resolveRelative(ctx.path, raw)
-      void (async () => {
-        const url = await readBlobUrl(ctx.files, target)
-        if (isCancelled()) {
-          if (url) URL.revokeObjectURL(url)
-          return
-        }
-        if (url) {
-          created.push(url)
-          img.setAttribute('src', url)
-        } else {
-          img.setAttribute('alt', `（画像が見つかりません：${raw}）`)
-        }
-      })()
-    } else if (ctx.absolutePath && api?.readBinaryFileByPath) {
-      const targetAbs = resolveAbsoluteRelative(ctx.absolutePath, raw)
-      void (async () => {
-        try {
-          const buf = await api.readBinaryFileByPath(targetAbs)
-          if (isCancelled()) return
-          const blob = new Blob([buf], { type: guessMimeFromPath(targetAbs) })
-          const url = URL.createObjectURL(blob)
-          created.push(url)
-          img.setAttribute('src', url)
-        } catch {
-          if (!isCancelled()) img.setAttribute('alt', `（画像が見つかりません：${raw}）`)
-        }
-      })()
-    } else {
-      img.setAttribute('alt', `（相対パスを解決できません：${raw}）`)
-    }
-  }
-
-  // Mermaid fences → static SVG. markdown.ts emits the escaped source inside
-  // <code class="language-mermaid">, so textContent recovers the original.
-  for (const code of Array.from(el.querySelectorAll<HTMLElement>('code.language-mermaid'))) {
-    const pre = code.parentElement
-    if (!pre || pre.tagName !== 'PRE') continue
-    const source = code.textContent ?? ''
-    const host = document.createElement('div')
-    host.className = 'mermaid'
-    pre.replaceWith(host)
-    void (async () => {
-      try {
-        const svg = await renderMermaid(source)
-        if (isCancelled()) return
-        host.innerHTML = svg
-      } catch (err) {
-        if (isCancelled()) return
-        host.className = 'mermaid-error'
-        host.textContent = `Mermaid: ${err instanceof Error ? err.message : String(err)}`
-      }
-    })()
-  }
-
-  return () => created.forEach((u) => URL.revokeObjectURL(u))
-}
-
-/** Seconds → `m:ss`. */
-function fmtClock(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60)
-  const s = totalSeconds % 60
-  return `${m}:${String(s).padStart(2, '0')}`
-}
-
-/**
- * Full-window presentation / teleprompter overlay built live from the active
- * markdown. Headings (or `---`) become slides; arrow keys / space / click advance;
- * `F` opens a presenter view with speaker notes, the next slide, and an elapsed
- * timer; `Esc` exits.
+ * The presenter view (🎤 / `F`) is dual-mode:
+ *   - In Electron it opens a **detached** second window — the main window becomes the
+ *     clean audience deck while the other window shows notes, the next slide, and a
+ *     timer. Navigation round-trips through the main window, which stays the single
+ *     source of truth for the current slide.
+ *   - In a plain browser (no second-window IPC) it falls back to an in-window split.
  */
 export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: Props) {
   const deck = useMemo(() => buildDeck(markdown, strategy), [markdown, strategy])
   const total = deck.slides.length
 
+  const api = typeof window !== 'undefined' ? window.mdexp : undefined
+  const canDetach = Boolean(api?.presenterOpen)
+
   const [index, setIndex] = useState(0)
+  // In-window presenter split (browser fallback only).
   const [presenter, setPresenter] = useState(false)
+  // Detached presenter window is open (Electron).
+  const [detached, setDetached] = useState(false)
+  const [portable, setPortable] = useState<PortableDeck | null>(null)
   const [controlsVisible, setControlsVisible] = useState(true)
   const [startedAt, setStartedAt] = useState(() => Date.now())
   const [now, setNow] = useState(() => Date.now())
@@ -158,6 +53,13 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
   const stageRef = useRef<HTMLElement>(null)
   const nextRef = useRef<HTMLElement>(null)
   const selfExitRef = useRef(false)
+  const detachedRef = useRef(false)
+  const presenterReadyRef = useRef(false)
+  const deckSentRef = useRef(false)
+
+  useEffect(() => {
+    detachedRef.current = detached
+  }, [detached])
 
   const go = useCallback(
     (delta: number) => setIndex((i) => Math.max(0, Math.min(total - 1, i + delta))),
@@ -166,6 +68,108 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
   const goTo = useCallback(
     (i: number) => setIndex(Math.max(0, Math.min(total - 1, i))),
     [total],
+  )
+
+  // ── Detached presenter window (Electron dual-screen) ──
+  // Send the deck once the presenter window is both mounted (ready) and the deck has
+  // been made portable (images inlined). Either may finish first, so both paths call
+  // this and a ref guards against a double send.
+  const trySendDeck = useCallback(() => {
+    if (!api || !presenterReadyRef.current || !portable || deckSentRef.current) return
+    deckSentRef.current = true
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
+    const fontStack = getComputedStyle(document.documentElement)
+      .getPropertyValue('--md-font')
+      .trim()
+    api.sendToPresenter({ type: 'deck', slides: portable.slides, index: safeIndex, theme, fontStack })
+  }, [api, portable, safeIndex])
+
+  const enterDetached = useCallback(async () => {
+    if (!api?.presenterOpen) return
+    deckSentRef.current = false
+    presenterReadyRef.current = false
+    setDetached(true)
+    api.presenterOpen()
+    try {
+      setPortable(await portableizeDeck(deck, ctx))
+    } catch (err) {
+      console.error('[present] portableize failed', err)
+      // Fall back to the un-inlined deck — mermaid still renders; some images may not.
+      setPortable({ slides: deck.slides })
+    }
+  }, [api, deck, ctx])
+
+  const leaveDetached = useCallback(() => {
+    setDetached(false)
+    deckSentRef.current = false
+    presenterReadyRef.current = false
+    api?.presenterClose?.()
+  }, [api])
+
+  const togglePresenter = useCallback(() => {
+    if (canDetach) {
+      if (detached) leaveDetached()
+      else void enterDetached()
+    } else {
+      setPresenter((p) => !p)
+    }
+  }, [canDetach, detached, enterDetached, leaveDetached])
+
+  // Relay channel with the presenter window: receive ready / nav / exit commands,
+  // and react to the user closing that window.
+  useEffect(() => {
+    if (!detached || !api?.onToMain) return
+    const offMain = api.onToMain((raw) => {
+      const msg = raw as { type?: string; index?: number } | null
+      switch (msg?.type) {
+        case 'ready':
+          presenterReadyRef.current = true
+          trySendDeck()
+          break
+        case 'next':
+          go(1)
+          break
+        case 'prev':
+          go(-1)
+          break
+        case 'goto':
+          if (typeof msg.index === 'number') goTo(msg.index)
+          break
+        case 'exit':
+          onExit()
+          break
+        default:
+          break
+      }
+    })
+    const offClosed = api.onPresenterClosed?.(() => {
+      presenterReadyRef.current = false
+      deckSentRef.current = false
+      setDetached(false)
+    })
+    return () => {
+      offMain()
+      offClosed?.()
+    }
+  }, [detached, api, trySendDeck, go, goTo, onExit])
+
+  // Retry the deck send when the portable deck arrives after the window was ready.
+  useEffect(() => {
+    if (detached) trySendDeck()
+  }, [detached, portable, trySendDeck])
+
+  // Push every navigation to the presenter window once the deck handshake is done.
+  useEffect(() => {
+    if (!detached || !api || !deckSentRef.current) return
+    api.sendToPresenter({ type: 'index', index: safeIndex })
+  }, [detached, api, safeIndex])
+
+  // Close the presenter window if this overlay unmounts while it's still open.
+  useEffect(
+    () => () => {
+      if (detachedRef.current) api?.presenterClose?.()
+    },
+    [api],
   )
 
   // Keyboard navigation.
@@ -200,7 +204,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
         case 'f':
         case 'F':
           e.preventDefault()
-          setPresenter((p) => !p)
+          togglePresenter()
           break
         case 'Escape':
           e.preventDefault()
@@ -212,7 +216,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [go, goTo, total, onExit])
+  }, [go, goTo, total, onExit, togglePresenter])
 
   // Drive the deck full-screen (best-effort), and treat the user leaving full
   // screen (Esc / native control) as an exit — but not our own teardown.
@@ -226,7 +230,10 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
     }
     const inFs = () => Boolean(d.fullscreenElement || d.webkitFullscreenElement)
     const onFsChange = () => {
-      if (!inFs() && !selfExitRef.current) onExit()
+      // Leaving full screen exits the show — except when a detached presenter window
+      // is driving things (the audience window may be un-fullscreened deliberately to
+      // reposition it across displays; only the presenter window or Esc ends it then).
+      if (!inFs() && !selfExitRef.current && !detachedRef.current) onExit()
     }
     document.addEventListener('fullscreenchange', onFsChange)
     document.addEventListener('webkitfullscreenchange', onFsChange)
@@ -245,7 +252,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
     }
   }, [onExit])
 
-  // Tick the presenter-view timer only while it's visible.
+  // Tick the in-window presenter timer only while that split is visible.
   useEffect(() => {
     if (!presenter) return
     const id = window.setInterval(() => setNow(Date.now()), 500)
@@ -253,8 +260,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
   }, [presenter])
 
   // Auto-hide the control bar (and the cursor) after a spell of mouse stillness;
-  // any movement brings them back. Skipped while the presenter view is open —
-  // `showControls` (below) forces the bar visible there regardless of this state.
+  // any movement brings them back. Skipped while the in-window split is open.
   useEffect(() => {
     if (presenter) return
     let timer: number | null = null
@@ -283,7 +289,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
     }
   }, [safeIndex, presenter, ctx])
 
-  // Enrich the next-slide thumbnail in the presenter view.
+  // Enrich the next-slide thumbnail in the in-window presenter split.
   useEffect(() => {
     const el = nextRef.current
     if (!el || !presenter || !next) return
@@ -310,6 +316,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000))
   const progress = total > 0 ? ((safeIndex + 1) / total) * 100 : 0
   const showControls = presenter || controlsVisible
+  const presenterActive = presenter || detached
 
   return (
     <div
@@ -322,7 +329,9 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
       {presenter ? (
         <div className="presenter-grid">
           <div className="presenter-current">
-            <div className="presenter-label">現在 ({safeIndex + 1}/{total})</div>
+            <div className="presenter-label">
+              現在 ({safeIndex + 1}/{total})
+            </div>
             <div className="present-stage">
               <article
                 ref={stageRef}
@@ -340,19 +349,10 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
             </div>
             <div className="presenter-notes">
               <div className="presenter-label">発表者ノート</div>
-              {current.hasNotes ? (
-                <div
-                  className="notes-body markdown-body"
-                  dangerouslySetInnerHTML={{ __html: current.notesHtml }}
-                />
-              ) : (
-                <p className="notes-empty">
-                  このスライドにノートはまだないよ。
-                  <br />
-                  本文に <code>&lt;!-- note: … --&gt;</code> と書くか、 <code>???</code>{' '}
-                  の行より下に書くと、ここに台本として出るよ。
-                </p>
-              )}
+              <div
+                className="notes-body markdown-body"
+                dangerouslySetInnerHTML={{ __html: current.hasNotes ? current.notesHtml : '' }}
+              />
             </div>
             <div className="presenter-next">
               <div className="presenter-label">
@@ -406,10 +406,10 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
         </button>
         <span className="present-sep" />
         <button
-          className={`present-ctl${presenter ? ' active' : ''}`}
-          onClick={() => setPresenter((p) => !p)}
-          aria-pressed={presenter}
-          title="発表者ビュー (F)"
+          className={`present-ctl${presenterActive ? ' active' : ''}`}
+          onClick={togglePresenter}
+          aria-pressed={presenterActive}
+          title={canDetach ? '発表者ビューを別ウィンドウで開く (F)' : '発表者ビュー (F)'}
         >
           🎤 発表者
         </button>
@@ -417,8 +417,6 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
           ✕ 終了
         </button>
       </div>
-
-      <div className="present-hint">← → 移動 ・ F 発表者ビュー ・ Esc 終了</div>
     </div>
   )
 }

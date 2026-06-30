@@ -51,6 +51,10 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let win: BrowserWindow | null = null
+// The detached presenter window (true dual-screen). It loads the same renderer
+// bundle with `?role=presenter`; messages are relayed between it and the main
+// window through the present:* / to-* IPC channels below.
+let presenterWin: BrowserWindow | null = null
 
 // "Open With" / double-click handoff from Finder. The event can fire before app.ready
 // on a cold launch, so the handler must be registered at module top, and incoming paths
@@ -203,6 +207,8 @@ function createWindow(): void {
   win.on('closed', () => {
     rendererReady = false
     win = null
+    // The presenter window is meaningless without its main window; tear it down too.
+    if (presenterWin && !presenterWin.isDestroyed()) presenterWin.close()
   })
 
   if (DEV_SERVER_URL) {
@@ -211,6 +217,36 @@ function createWindow(): void {
   } else {
     win.loadURL('app://local/index.html')
   }
+}
+
+/**
+ * Open (or focus) the detached presenter window. It loads the same renderer with
+ * `?role=presenter`, which mounts the lightweight presenter mirror. When the user
+ * closes it, the main window is told so its in-app state can follow.
+ */
+function createPresenterWindow(): void {
+  if (presenterWin && !presenterWin.isDestroyed()) {
+    presenterWin.focus()
+    return
+  }
+  presenterWin = new BrowserWindow({
+    width: 960,
+    height: 720,
+    title: '発表者ビュー',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: PRELOAD,
+    },
+  })
+  const target = DEV_SERVER_URL
+    ? `${DEV_SERVER_URL}?role=presenter`
+    : 'app://local/index.html?role=presenter'
+  presenterWin.loadURL(target)
+  presenterWin.on('closed', () => {
+    presenterWin = null
+    win?.webContents.send('mdexp:presenter-closed')
+  })
 }
 
 /**
@@ -341,6 +377,21 @@ app.whenReady().then(async () => {
   // Fallback close used when the renderer has no tabs left to close on Cmd+W.
   ipcMain.on('mdexp:close-window', () => {
     win?.close()
+  })
+
+  // ── Detached presenter window (dual-screen) ──
+  // Open/close requested by the main window's presentation overlay.
+  ipcMain.on('mdexp:presenter-open', () => createPresenterWindow())
+  ipcMain.on('mdexp:presenter-close', () => {
+    if (presenterWin && !presenterWin.isDestroyed()) presenterWin.close()
+  })
+  // Relay deck / index pushes from the main window to the presenter window…
+  ipcMain.on('mdexp:to-presenter', (_e, msg: unknown) => {
+    presenterWin?.webContents.send('mdexp:presenter-msg', msg)
+  })
+  // …and navigation / exit commands (plus the initial "ready") back the other way.
+  ipcMain.on('mdexp:to-main', (_e, msg: unknown) => {
+    win?.webContents.send('mdexp:main-msg', msg)
   })
 
   // Porcelain git status for the active root, returned as `{ path → status }`.

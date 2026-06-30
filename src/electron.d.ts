@@ -61,6 +61,20 @@ interface MdexpApi {
    * Resolves to null when the root is outside any git repo or git is unavailable.
    */
   gitStatus(absoluteRootPath: string): Promise<Record<string, MdexpGitStatusCode> | null>
+  /** Open (or focus) the detached presenter window. Main window only. */
+  presenterOpen(): void
+  /** Close the detached presenter window. Main window only. */
+  presenterClose(): void
+  /** Main window → presenter window: push a deck-init or index-update message. */
+  sendToPresenter(msg: unknown): void
+  /** Presenter window: subscribe to pushes from the main window. Returns an unsubscribe fn. */
+  onToPresenter(handler: (msg: unknown) => void): () => void
+  /** Presenter window → main window: send a navigation / exit / ready command. */
+  sendToMain(msg: unknown): void
+  /** Main window: subscribe to commands from the presenter window. Returns an unsubscribe fn. */
+  onToMain(handler: (msg: unknown) => void): () => void
+  /** Main window: subscribe to the presenter window being closed by the user. */
+  onPresenterClosed(handler: () => void): () => void
 }
 
 /** Single-letter status surface for the sidebar. See `MdexpApi.gitStatus`. */
