@@ -57,6 +57,8 @@ interface Props {
   focusMode?: boolean
   /** Toggle the host's focus mode. */
   onToggleFocus?: () => void
+  /** Enter presentation mode for the active markdown source (shown for .md only). */
+  onPresent?: () => void
 }
 
 interface Gesture {
@@ -77,6 +79,7 @@ export function Preview({
   reloadCounter = 0,
   focusMode = false,
   onToggleFocus,
+  onPresent,
 }: Props) {
   const [html, setHtml] = useState('')
   /**
@@ -679,6 +682,9 @@ export function Preview({
     : undefined
   const headerText =
     source.kind === 'in-root' ? source.path : `${source.name}（外部ファイル）`
+  // The present button only makes sense for markdown — code/CSV views aren't decks.
+  const isMarkdownSource =
+    source.kind === 'in-root' ? isMarkdownPath(source.path) : isMarkdownPath(source.name)
   return (
     <div className="preview-wrap" ref={swipeRef}>
       <div className="preview" ref={scrollRef}>
@@ -737,6 +743,26 @@ export function Preview({
             </span>
           )}
           <span className="path-text">{headerText}</span>
+          {onPresent && isMarkdownSource && (
+            <button
+              className="nav-btn present-btn"
+              onClick={() => onPresent()}
+              title="プレゼン: 見出しごとにスライド表示 (⌘P)"
+              aria-label="プレゼンを開始"
+            >
+              <svg
+                className="nav-btn-svg"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="currentColor"
+                aria-hidden
+              >
+                {/* Material "slideshow": a play triangle inside a screen frame. */}
+                <path d="M10 8v8l5-4-5-4zm9-5H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z" />
+              </svg>
+            </button>
+          )}
           {onToggleFocus && (
             <button
               className={`nav-btn focus-btn${focusMode ? ' active' : ''}`}

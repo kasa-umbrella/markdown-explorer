@@ -14,7 +14,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/biz-udpgothic": "^5.2.9",
+    "@fontsource/dela-gothic-one": "^5.2.7",
+    "@fontsource/kaisei-decol": "^5.2.7",
+    "@fontsource/m-plus-rounded-1c": "^5.2.10",
     "@fontsource/noto-sans-jp": "^5.2.9",
+    "@fontsource/noto-serif-jp": "^5.2.8",
+    "@fontsource/zen-maru-gothic": "^5.2.8",
     "@xyflow/react": "^12.11.0",
     "cytoscape": "^3.34.0",
     "dagre": "^0.8.5",

@@ -32,8 +32,10 @@
   --git-untracked: #6e7781;
 
   color-scheme: light;
-  font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Hiragino Sans', sans-serif;
+  /* App-wide base font. --app-font is set from Settings (see App.tsx); the literal
+     stack after it is the fallback shown until the picked face loads. */
+  font-family: var(--app-font, 'Noto Sans JP', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Hiragino Sans', sans-serif);
   font-size: 17px;
 }
 
@@ -89,6 +91,14 @@ body {
 button {
   font: inherit;
   cursor: pointer;
+}
+
+/* Form controls don't inherit font-family by default — opt them in so the picked
+   app font reaches the search box, extension field, etc. (size is left untouched). */
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 a {

@@ -6,12 +6,15 @@ import { useSidebarWidth } from './hooks/useSidebarWidth'
 import { useSettings } from './hooks/useSettings'
 import { useGitStatus } from './hooks/useGitStatus'
 import { filterTree } from './lib/filterTree'
-import { buildViewableExtensions, matchesViewable } from './lib/extensions'
+import { buildViewableExtensions, isMarkdownPath, matchesViewable } from './lib/extensions'
+import { readTextFile } from './lib/fsAccess'
+import { getFont } from './lib/fonts'
 import { TreeView } from './components/TreeView'
 import { SearchResults } from './components/SearchResults'
 import { TabBar } from './components/TabBar'
 import { Preview, type PreviewSource } from './components/Preview'
 import { GraphView } from './components/GraphView'
+import { PresentationView, type PresentCtx } from './components/PresentationView'
 import { SettingsModal } from './components/SettingsModal'
 import iconUrl from '../build/icon.png'
 import type { FileEntry } from './types'
@@ -166,6 +169,10 @@ export default function App() {
   const [pendingInRootOpen, setPendingInRootOpen] = useState<PendingInRootOpen | null>(null)
   const [graphMode, setGraphMode] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  // Active presentation deck (raw markdown + image-resolution context), or null
+  // when not presenting. Built on demand from the active tab so Preview can stay
+  // the sole owner of the rendered HTML.
+  const [present, setPresent] = useState<{ markdown: string; ctx: PresentCtx } | null>(null)
   // When true, the sidebar / tab bar / settings FAB collapse so only the active
   // preview is visible. Toggled by the focus button in the doc-path header, and
   // exited by Esc (handler below).
@@ -221,6 +228,16 @@ export default function App() {
     }
     root.dataset.theme = settings.theme
   }, [settings.theme])
+
+  // Apply the chosen font app-wide by setting --app-font on <html>: the :root font-family
+  // reads it (so the whole UI follows), and GraphView snapshots it via getComputedStyle the
+  // same way it reads the theme vars. The fallback stack shows immediately; load() pulls in
+  // the @fontsource weights, which then swap in via font-display.
+  useEffect(() => {
+    const font = getFont(settings.mainFont)
+    document.documentElement.style.setProperty('--app-font', font.stack)
+    void font.load()
+  }, [settings.mainFont])
 
   // When the root folder changes, drop in-root tabs (their paths are tied to the previous
   // root) — but keep external tabs so files opened via Finder/drop survive a root switch.
@@ -515,6 +532,48 @@ export default function App() {
     }
   }, [pendingPromote, dir])
 
+  // Enter presentation mode for the active markdown tab. In-root sources are read
+  // fresh from disk here (Preview owns the rendered HTML, not the raw text); external
+  // tabs already carry their content. No-ops for non-markdown sources.
+  const activeTab = tabs.active
+  const startPresentation = useCallback(async () => {
+    if (!activeTab) return
+    if (activeTab.source.kind === 'external') {
+      if (!isMarkdownPath(activeTab.source.name)) return
+      setPresent({
+        markdown: activeTab.source.content,
+        ctx: { kind: 'external', absolutePath: activeTab.source.absolutePath ?? null },
+      })
+      return
+    }
+    const filePath = activeTab.source.path
+    if (!isMarkdownPath(filePath) || !dir.scan) return
+    try {
+      const text = await readTextFile(dir.scan.files, filePath)
+      setPresent({
+        markdown: text,
+        ctx: { kind: 'in-root', path: filePath, files: dir.scan.files },
+      })
+    } catch (err) {
+      console.error('[present] failed to read', filePath, err)
+    }
+  }, [activeTab, dir.scan])
+
+  const exitPresentation = useCallback(() => setPresent(null), [])
+
+  // ⌘/Ctrl+P starts presenting the active markdown (overriding the browser print
+  // dialog, which a read-only viewer has no use for). Esc inside the deck exits.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault()
+        if (!present) void startPresentation()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [present, startPresentation])
+
   // Document-level drag-and-drop: accept .md files dropped from outside (e.g. VSCode, Finder).
   // Dropped files become external tabs since we don't know their parent directory.
   useEffect(() => {
@@ -807,6 +866,7 @@ export default function App() {
                 reloadCounter={reloadCounter}
                 focusMode={focusMode}
                 onToggleFocus={() => setFocusMode((f) => !f)}
+                onPresent={startPresentation}
               />
             ) : dir.status === 'ready' ? (
               <Preview
@@ -874,6 +934,14 @@ export default function App() {
           onUpdate={updateSettings}
           onReset={resetSettings}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {present && (
+        <PresentationView
+          markdown={present.markdown}
+          ctx={present.ctx}
+          onExit={exitPresentation}
         />
       )}
     </div>

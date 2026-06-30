@@ -114,6 +114,9 @@ export function GraphView({ scan, activePath, onSelectFile }: Props) {
       const themeText = themeStyles.getPropertyValue('--text').trim() || '#1f2328'
       const themeBg = themeStyles.getPropertyValue('--bg').trim() || '#ffffff'
       const themeAccent = themeStyles.getPropertyValue('--accent').trim() || '#2f6feb'
+      // Mirror the app font picked in Settings (snapshotted, like the colours above).
+      const themeFont =
+        themeStyles.getPropertyValue('--app-font').trim() || "'Noto Sans JP', sans-serif"
 
       const elements = [
         ...graph.nodes.map((id) => {
@@ -154,7 +157,7 @@ export function GraphView({ scan, activePath, onSelectFile }: Props) {
               'border-width': 3,
               label: 'data(label)',
               'font-size': 14,
-              'font-family': "'Noto Sans JP', sans-serif",
+              'font-family': themeFont,
               color: themeText,
               'text-valign': 'bottom',
               'text-margin-y': 7,

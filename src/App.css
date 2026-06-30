@@ -910,6 +910,80 @@ body.resizing .resize-handle {
   background: var(--bg);
 }
 
+/* Font picker: a vertical list of selectable faces, each row previewing itself. */
+.settings-row-font {
+  grid-template-columns: 110px 1fr;
+  align-items: start;
+}
+
+.font-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.font-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease-out, background 120ms ease-out;
+}
+
+.font-pick:hover {
+  border-color: var(--border);
+}
+
+.font-pick.active {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.font-pick-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.font-pick-name {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.font-pick-tag {
+  flex: none;
+  /* Tag is meta, not part of the previewed face — pin it back to the UI font. */
+  font-family: 'Noto Sans JP', -apple-system, sans-serif;
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 6px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.font-pick.active .font-pick-tag {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.font-pick-sample {
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.font-pick.active .font-pick-sample {
+  color: var(--text);
+}
+
 .settings-text {
   width: 100%;
   padding: 6px 8px;
@@ -1000,6 +1074,7 @@ body.resizing .resize-handle {
   margin: 0 auto;
   /* Add a little bottom padding so the end stays comfortable to read */
   padding: 24px 12px 20vh;
+  /* Font is inherited from :root (--app-font, picked in Settings) — applied app-wide. */
   font-size: var(--md-font-size, 17px);
   line-height: var(--md-line-height, 1.7);
 }
@@ -1447,4 +1522,275 @@ body.resizing .resize-handle {
 .csv-empty {
   color: var(--muted);
   padding: 16px;
+}
+
+/* Pinned to the right cluster alongside the focus button. The first margin-left:auto
+   (here) eats the free space; the focus button's own auto then has none left, so the
+   two sit together at the right edge of the doc-path. */
+.present-btn {
+  margin-left: auto;
+}
+
+/* ───────── Presentation / Teleprompter mode ─────────
+   A full-window deck built live from the active markdown: headings (or `---`)
+   become slide breaks, `<!-- note: -->` / `???` become speaker notes. Reuses
+   .markdown-body — so code, tables, and mermaid render exactly like the reading
+   view — and just rescales it to slide proportions via the --md-* custom props. */
+.presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  --md-font-size: clamp(20px, 2.05vw, 34px);
+  --md-line-height: 1.5;
+  --md-max-width: 100%;
+}
+.presentation.idle {
+  cursor: none;
+}
+
+.present-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 220ms ease-out;
+  z-index: 3;
+}
+
+.present-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 5vw;
+  overflow: hidden;
+}
+
+/* The reused article: full width, vertically scrollable if a slide runs long,
+   and without the reading view's tall bottom padding. */
+.slide-body {
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 0 8px;
+}
+.slide-body::-webkit-scrollbar {
+  width: 8px;
+}
+.slide-body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+.slide-body > :first-child {
+  margin-top: 0;
+}
+/* Slide headings read as titles, not document section rules. */
+.slide-body h1 {
+  font-size: 2.1em;
+  border-bottom: none;
+}
+.slide-body h2 {
+  font-size: 1.7em;
+  border-bottom: none;
+}
+
+/* Floating control bar */
+.present-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel-overlay-strong);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 6px 24px var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  z-index: 4;
+  transition: opacity 200ms ease-out;
+}
+.presentation.idle .present-bar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.present-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+.present-ctl:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.present-ctl:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.present-ctl.active {
+  color: var(--accent);
+  background: var(--panel-2);
+}
+.present-counter {
+  min-width: 56px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.present-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+}
+
+.present-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.7;
+  z-index: 4;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+.presentation.idle .present-hint {
+  opacity: 0;
+}
+.presentation.presenter .present-hint {
+  display: none;
+}
+
+/* ── Presenter view: current slide + notes / next / timer ── */
+.presenter-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 18px;
+  padding: 22px 22px 70px;
+}
+.presenter-current,
+.presenter-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.presenter-side {
+  gap: 14px;
+}
+.presenter-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The current-slide preview is framed and rendered at a calmer scale than the
+   full-bleed stage so it sits beside the notes panel. */
+.presenter-current .present-stage {
+  flex: 1;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  --md-font-size: clamp(16px, 1.4vw, 24px);
+}
+
+.presenter-timer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.timer-clock {
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.present-btn-sm {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.present-btn-sm:hover {
+  background: var(--panel-2);
+}
+
+.presenter-notes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.notes-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  font-size: 19px;
+  line-height: 1.6;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.notes-body > :first-child {
+  margin-top: 0;
+}
+.notes-empty {
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+.notes-empty code {
+  font-size: 0.9em;
+}
+
+/* Next-slide thumbnail: render the slide at full size, then scale it down to fill
+   a fixed box (transform keeps the layout faithful, unlike a font-size shrink). */
+.next-scale {
+  height: 150px;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.next-scale .slide-body {
+  width: 200%;
+  height: 200%;
+  padding: 12px;
+  overflow: hidden;
+  pointer-events: none;
+  transform: scale(0.5);
+  transform-origin: top left;
+  --md-font-size: 17px;
+}
+.next-end {
+  padding: 18px;
+  color: var(--muted);
 }
