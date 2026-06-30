@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { parseExtensionList } from '../lib/extensions'
+import { DEFAULT_FONT_ID, isFontId } from '../lib/fonts'
 
 /** Color scheme: 'system' tracks the OS preference, 'light' / 'dark' force the choice. */
 export type ThemePref = 'system' | 'light' | 'dark'
@@ -9,6 +10,8 @@ export interface Settings {
   windowOpacity: number
   /** Pin the window above other apps' windows. */
   alwaysOnTop: boolean
+  /** App-wide display font id (see `FONTS` in ../lib/fonts). Drives the :root font-family. */
+  mainFont: string
   /** Base font size of the rendered Markdown body (the main panel only). */
   mainFontSize: number
   /** Line-height multiplier for the rendered Markdown body. */
@@ -24,17 +27,24 @@ export interface Settings {
    * render as syntax-highlighted code. Markdown extensions are always supported on top of this.
    */
   extraExtensions: string[]
+  /**
+   * Show entries whose name begins with a dot (e.g. `.claude/`, `.github/`).
+   * Off by default — these are usually tool config / VCS state and only clutter the tree.
+   */
+  showHidden: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   windowOpacity: 1,
   alwaysOnTop: false,
+  mainFont: DEFAULT_FONT_ID,
   mainFontSize: 17,
   mainLineHeight: 1.7,
   mainMaxWidth: 95,
   wrapCode: false,
   theme: 'system',
-  extraExtensions: ['yaml', 'yml', 'json'],
+  extraExtensions: ['yaml', 'yml', 'json', 'csv'],
+  showHidden: false,
 }
 
 export const SETTINGS_RANGES = {
@@ -62,6 +72,7 @@ function sanitize(raw: unknown): Settings {
       SETTINGS_RANGES.windowOpacity.max,
     ),
     alwaysOnTop: Boolean(r.alwaysOnTop),
+    mainFont: isFontId(r.mainFont) ? r.mainFont : DEFAULT_SETTINGS.mainFont,
     mainFontSize: clamp(
       num(r.mainFontSize, DEFAULT_SETTINGS.mainFontSize),
       SETTINGS_RANGES.mainFontSize.min,
@@ -84,6 +95,7 @@ function sanitize(raw: unknown): Settings {
     wrapCode: Boolean(r.wrapCode),
     theme: sanitizeTheme(r.theme),
     extraExtensions: sanitizeExtensions(r.extraExtensions),
+    showHidden: Boolean(r.showHidden),
   }
 }
 

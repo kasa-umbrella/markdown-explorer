@@ -14,12 +14,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/biz-udpgothic": "^5.2.9",
+    "@fontsource/dela-gothic-one": "^5.2.7",
+    "@fontsource/kaisei-decol": "^5.2.7",
+    "@fontsource/m-plus-rounded-1c": "^5.2.10",
     "@fontsource/noto-sans-jp": "^5.2.9",
+    "@fontsource/noto-serif-jp": "^5.2.8",
+    "@fontsource/zen-maru-gothic": "^5.2.8",
     "@xyflow/react": "^12.11.0",
     "cytoscape": "^3.34.0",
     "dagre": "^0.8.5",
     "highlight.js": "^11.11.1",
     "idb-keyval": "^6.2.4",
+    "js-yaml": "^4.2.0",
     "markdown-it": "^14.2.0",
     "markdown-it-anchor": "^9.2.0",
     "markdown-it-task-lists": "^2.1.1",
@@ -30,6 +37,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/dagre": "^0.7.54",
+    "@types/js-yaml": "^4.0.9",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
@@ -69,6 +77,14 @@
             "LSItemContentTypes": [
               "net.daringfireball.markdown",
               "public.plain-text"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Folder",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.folder"
             ]
           }
         ],

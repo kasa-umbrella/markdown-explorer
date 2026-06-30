@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { buildContentIndex, searchContent, type SearchMatch } from '../lib/searchContent'
+import type { FileEntry } from '../types'
 
 type Status = 'idle' | 'indexing' | 'ready'
 
@@ -13,7 +14,7 @@ const DEBOUNCE_MS = 200
  * @param enabled When false, the hook stays idle and returns no matches.
  */
 export function useContentSearch(
-  files: Map<string, FileSystemFileHandle>,
+  files: Map<string, FileEntry>,
   viewable: ReadonlySet<string>,
   query: string,
   enabled: boolean,
@@ -22,7 +23,7 @@ export function useContentSearch(
   const [status, setStatus] = useState<Status>('idle')
   const indexRef = useRef<Map<string, string> | null>(null)
   // Identity of the file map / viewable set the cached index was built from.
-  const indexForRef = useRef<Map<string, FileSystemFileHandle> | null>(null)
+  const indexForRef = useRef<Map<string, FileEntry> | null>(null)
   const indexForViewableRef = useRef<ReadonlySet<string> | null>(null)
 
   const active = enabled && query.trim().length > 0

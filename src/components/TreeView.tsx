@@ -87,7 +87,11 @@ function TreeItem({ node, selectedPath, onSelect, onActivate, forceExpand, revea
           }}
           title={node.path}
         >
-          <span className="icon">📄</span>
+          <span className="icon" aria-hidden>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z" />
+            </svg>
+          </span>
           <span className="label">{node.name}</span>
         </button>
       </li>
@@ -102,7 +106,17 @@ function TreeItem({ node, selectedPath, onSelect, onActivate, forceExpand, revea
         onClick={() => setOpen((o) => !o)}
         title={node.path}
       >
-        <span className="icon">{open ? '📂' : '📁'}</span>
+        <span className="icon" aria-hidden>
+          {open ? (
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
+            </svg>
+          )}
+        </span>
         <span className="label">{node.name}</span>
       </button>
       {open && (

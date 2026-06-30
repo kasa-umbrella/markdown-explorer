@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { renderAsCodeBlock, renderMarkdown } from '../lib/markdown'
 import { readBlobUrl, readTextFile } from '../lib/fsAccess'
-import { getExtension, isMarkdownPath } from '../lib/extensions'
+import { getExtension, isCsvPath, isMarkdownPath } from '../lib/extensions'
+import { CsvTable } from './CsvTable'
 import {
   guessMimeFromPath,
   isExternalUrl,
@@ -13,9 +14,10 @@ import {
 import { renderMermaid } from '../lib/mermaid'
 import { isFlowchart } from '../lib/mermaidFlow'
 import { MermaidFlow } from './MermaidFlow'
+import type { FileEntry } from '../types'
 
 export type PreviewSource =
-  | { kind: 'in-root'; path: string; files: Map<string, FileSystemFileHandle> }
+  | { kind: 'in-root'; path: string; files: Map<string, FileEntry> }
   | {
       kind: 'external'
       name: string
@@ -32,16 +34,6 @@ interface Props {
   onForward: () => void
   canBack: boolean
   canForward: boolean
-  /**
-   * Absolute OS path of the active root (in-root tabs only). Required for the
-   * Git Time Machine; when null, the time bar still opens but prompts the user
-   * to link the root via `onLinkRoot`.
-   */
-  rootAbsPath?: string | null
-  /** Display name of the active root; shown in the time-bar's link prompt. */
-  rootName?: string | null
-  /** Opens the native directory picker and persists the chosen abs path. */
-  onLinkRoot?: () => Promise<string | null>
   /**
    * Open an absolute filesystem path as a new external tab. Called when the user
    * clicks a relative .md link inside an externally-opened file — we don't have a
@@ -61,6 +53,12 @@ interface Props {
    * already changes when the host re-reads on their behalf).
    */
   reloadCounter?: number
+  /** Whether the host is currently in focus (full-pane) mode. */
+  focusMode?: boolean
+  /** Toggle the host's focus mode. */
+  onToggleFocus?: () => void
+  /** Enter presentation mode for the active markdown source (shown for .md only). */
+  onPresent?: () => void
 }
 
 interface Gesture {
@@ -76,14 +74,19 @@ export function Preview({
   onForward,
   canBack,
   canForward,
-  rootAbsPath = null,
-  rootName = null,
-  onLinkRoot,
   onOpenExternalPath,
   onReload,
   reloadCounter = 0,
+  focusMode = false,
+  onToggleFocus,
+  onPresent,
 }: Props) {
   const [html, setHtml] = useState('')
+  /**
+   * Raw text of the active source when it's a CSV. The viewer renders <CsvTable>
+   * instead of the markdown HTML pipeline; `html` is left empty in that branch.
+   */
+  const [csvText, setCsvText] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [gesture, setGesture] = useState<Gesture | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -98,83 +101,104 @@ export function Preview({
   const externalContent = source?.kind === 'external' ? source.content : null
   const externalAbsPath = source?.kind === 'external' ? source.absolutePath ?? null : null
 
-  // ─── Time Machine state ───
-  // `timeOpen` toggles the history bar in the header. `cursorSha` selects which
-  // revision drives the rendered content — null means "working tree" (current FS).
-  // History is loaded lazily on first open of the bar for each file.
-  const [timeOpen, setTimeOpen] = useState(false)
-  const [commits, setCommits] = useState<MdexpGitCommit[] | null>(null)
-  const [historyStatus, setHistoryStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [historyError, setHistoryError] = useState<string | null>(null)
-  const [cursorSha, setCursorSha] = useState<string | null>(null)
-
-  /**
-   * Absolute path of the active in-root file. Built by joining the saved root
-   * abs path with the FSA-relative path. Null whenever either side is missing
-   * (external tabs, or root not yet linked).
-   */
-  const absoluteFilePath =
-    kind === 'in-root' && path && rootAbsPath
-      ? `${rootAbsPath.replace(/\/+$/, '')}/${path}`
-      : null
-
-  /** Reset the time-machine cursor and cached history whenever the file changes. */
+  // [debug] re-attach MutationObserver every render so we always watch the LIVE
+  // article element (in case React replaces it). Also polls host count to detect
+  // disappearance even if observer misses it.
+  const lastArticleRef = useRef<HTMLElement | null>(null)
+  const obsRef = useRef<MutationObserver | null>(null)
   useEffect(() => {
-    setCursorSha(null)
-    setCommits(null)
-    setHistoryStatus('idle')
-    setHistoryError(null)
-  }, [kind, path, externalName])
-
-  /** External tabs and absent paths can't be time-traveled — fold the bar shut. */
-  useEffect(() => {
-    if (kind !== 'in-root') setTimeOpen(false)
-  }, [kind])
-
-  /** Fetch `git log --follow` once the bar is opened against a linked root. */
-  useEffect(() => {
-    if (!timeOpen || !absoluteFilePath) return
-    const api = window.mdexp
-    if (!api?.gitHistory) return
-    let cancelled = false
-    setHistoryStatus('loading')
-    setHistoryError(null)
-    ;(async () => {
-      try {
-        const list = await api.gitHistory(absoluteFilePath)
-        if (cancelled) return
-        setCommits(list)
-        setHistoryStatus('idle')
-      } catch (e) {
-        if (cancelled) return
-        setHistoryError(e instanceof Error ? e.message : String(e))
-        setHistoryStatus('error')
-      }
-    })()
-    return () => {
-      cancelled = true
+    const el = containerRef.current
+    if (el !== lastArticleRef.current) {
+      // eslint-disable-next-line no-console
+      console.log('[mermaid-debug] ARTICLE IDENTITY CHANGED', {
+        wasNull: lastArticleRef.current === null,
+        now: el ? 'present' : 'null',
+        time: new Date().toISOString(),
+      })
+      lastArticleRef.current = el
+      obsRef.current?.disconnect()
+      obsRef.current = null
     }
-  }, [timeOpen, absoluteFilePath])
+    if (!el || obsRef.current) return
+    const obs = new MutationObserver((muts) => {
+      for (const m of muts) {
+        for (const node of Array.from(m.removedNodes)) {
+          if (!(node instanceof HTMLElement)) continue
+          const isHost =
+            (node.dataset && node.dataset.mermaidStatus !== undefined) ||
+            node.classList?.contains('mermaid') ||
+            node.classList?.contains('mermaid-flow-host') ||
+            node.classList?.contains('mermaid-error')
+          if (isHost) {
+            // eslint-disable-next-line no-console
+            console.log('[mermaid-debug] HOST REMOVED', {
+              className: node.className,
+              status: node.dataset?.mermaidStatus,
+              parent: m.target instanceof HTMLElement ? m.target.tagName + '.' + m.target.className : String(m.target),
+              hadChildren: node.childElementCount,
+              time: new Date().toISOString(),
+            })
+            // eslint-disable-next-line no-console
+            console.trace('[mermaid-debug] removed by')
+          }
+        }
+        // Also log when many nodes vanish at once (whole-innerHTML replacement)
+        if (m.removedNodes.length > 3) {
+          // eslint-disable-next-line no-console
+          console.log('[mermaid-debug] BULK REMOVAL', {
+            count: m.removedNodes.length,
+            target: m.target instanceof HTMLElement ? m.target.tagName + '.' + m.target.className : String(m.target),
+          })
+        }
+      }
+    })
+    obs.observe(el, { childList: true, subtree: true })
+    obsRef.current = obs
+  })
+
+  // [debug] poll host count once per second. Catches disappearances the observer might miss.
+  useEffect(() => {
+    let prev = -1
+    const id = window.setInterval(() => {
+      const el = containerRef.current
+      if (!el) return
+      const hosts = el.querySelectorAll('[data-mermaid-status], .mermaid, .mermaid-flow-host, .mermaid-error').length
+      const pres = el.querySelectorAll('code.language-mermaid').length
+      if (hosts !== prev) {
+        // eslint-disable-next-line no-console
+        console.log('[mermaid-debug] poll', { hosts, pres, articleChildren: el.childElementCount, time: new Date().toISOString() })
+        prev = hosts
+      }
+    }, 500)
+    return () => window.clearInterval(id)
+  }, [])
 
   // When the selected source changes, load and render it.
   // Markdown files go through the full markdown-it pipeline; everything else is rendered as a
   // single syntax-highlighted code block keyed off its extension (yaml/json/...).
-  // When `cursorSha` is set, the in-root branch routes through `git show <sha>:<file>`
-  // instead of the working-tree read so the user sees that revision's content.
   useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log('[mermaid-debug] load effect', { kind, path, externalName, reloadCounter })
     if (!kind) {
       setHtml('')
+      setCsvText(null)
       setError(null)
       return
     }
     if (kind === 'external') {
       setError(null)
       const name = externalName ?? ''
-      if (isMarkdownPath(name)) {
-        setHtml(renderMarkdown(externalContent ?? ''))
+      const content = externalContent ?? ''
+      if (isCsvPath(name)) {
+        setHtml('')
+        setCsvText(content)
+      } else if (isMarkdownPath(name)) {
+        setCsvText(null)
+        setHtml(renderMarkdown(content))
       } else {
+        setCsvText(null)
         const ext = getExtension(name) ?? ''
-        setHtml(renderAsCodeBlock(externalContent ?? '', ext))
+        setHtml(renderAsCodeBlock(content, ext))
       }
       return
     }
@@ -182,17 +206,17 @@ export function Preview({
     let cancelled = false
     ;(async () => {
       try {
-        let src: string
-        if (cursorSha && absoluteFilePath && window.mdexp?.gitShow) {
-          src = await window.mdexp.gitShow(absoluteFilePath, cursorSha)
-        } else {
-          src = await readTextFile(files, path)
-        }
+        const src = await readTextFile(files, path)
         if (cancelled) return
         setError(null)
-        if (isMarkdownPath(path)) {
+        if (isCsvPath(path)) {
+          setHtml('')
+          setCsvText(src)
+        } else if (isMarkdownPath(path)) {
+          setCsvText(null)
           setHtml(renderMarkdown(src))
         } else {
+          setCsvText(null)
           const ext = getExtension(path) ?? ''
           setHtml(renderAsCodeBlock(src, ext))
         }
@@ -203,7 +227,7 @@ export function Preview({
     return () => {
       cancelled = true
     }
-  }, [kind, path, files, externalName, externalContent, cursorSha, absoluteFilePath, reloadCounter])
+  }, [kind, path, files, externalName, externalContent, reloadCounter])
 
   // After rendering: swap image relative paths for Blob URLs (in-root only).
   useEffect(() => {
@@ -230,8 +254,12 @@ export function Preview({
     }
 
     // Wrap wide tables in a frame so each can scroll horizontally on its own.
+    // Frontmatter tables (and their nested children) are exempt — they're
+    // size-constrained by the value-cell layout, and wrapping them in a scroll
+    // box adds awkward margins at the top of the document.
     for (const table of Array.from(el.querySelectorAll('table'))) {
       if (table.parentElement?.classList.contains('table-wrap')) continue // avoid double-wrapping
+      if (table.classList.contains('frontmatter-table')) continue
       const wrap = document.createElement('div')
       wrap.className = 'table-wrap'
       table.replaceWith(wrap)
@@ -289,6 +317,7 @@ export function Preview({
 
     for (const table of Array.from(el.querySelectorAll('table'))) {
       if (table.parentElement?.classList.contains('table-wrap')) continue
+      if (table.classList.contains('frontmatter-table')) continue
       const wrap = document.createElement('div')
       wrap.className = 'table-wrap'
       table.replaceWith(wrap)
@@ -318,56 +347,127 @@ export function Preview({
     const el = containerRef.current
     if (!el) return
     let cancelled = false
-    /** Roots mounted into the current `html` render so we can unmount on the next pass. */
+    // eslint-disable-next-line no-console
+    console.log('[mermaid-debug] mermaid effect MOUNT', {
+      htmlLen: html.length,
+      csvText: csvText !== null,
+      hosts: el.querySelectorAll('div[data-mermaid-status]').length,
+      pres: el.querySelectorAll('code.language-mermaid').length,
+    })
+    /** React roots mounted during this run so cleanup can tear them down. */
     const mountedRoots: Root[] = []
-    const blocks = el.querySelectorAll<HTMLElement>('code.language-mermaid')
-    for (const code of Array.from(blocks)) {
+
+    // First pass: synchronously hoist every raw <pre><code class="language-mermaid">
+    // into a host <div> that carries the source as a data attribute. Replacing the
+    // pre up-front frees the block from the `pre:has(...)` visibility CSS so that
+    // a cancelled or failed render can't leave a permanently-invisible <pre>.
+    for (const code of Array.from(
+      el.querySelectorAll<HTMLElement>('code.language-mermaid'),
+    )) {
       const pre = code.parentElement
       if (!pre || pre.tagName !== 'PRE') continue
-      if (pre.dataset.mermaid === 'done') continue
-      pre.dataset.mermaid = 'done'
-      const source = code.textContent ?? ''
+      const host = document.createElement('div')
+      host.dataset.mermaidSrc = code.textContent ?? ''
+      host.dataset.mermaidStatus = 'pending'
+      pre.replaceWith(host)
+    }
+
+    // Second pass: render every host that hasn't reached "done" yet. We pick up
+    // both fresh "pending" hosts from the first pass and "rendering" leftovers
+    // from a previous effect run whose async bailed mid-flight (StrictMode's
+    // mount→unmount→mount, or any cancellation that didn't get a follow-up
+    // commit). Done hosts are skipped so we don't redraw an already-painted SVG.
+    for (const host of Array.from(
+      el.querySelectorAll<HTMLElement>(
+        'div[data-mermaid-status="pending"], div[data-mermaid-status="rendering"]',
+      ),
+    )) {
+      // Skip hosts that already have something painted in them. Two cases:
+      //   1. Flowchart hosts stay flagged "rendering" forever (React-Flow owns
+      //      the canvas), so we'd loop-mount them every effect run otherwise.
+      //   2. A static-SVG host whose async landed before the cleanup walked
+      //      it back to "pending" — we'd re-render the same diagram on top of
+      //      itself, which works but throws away the layout for a beat.
+      if (host.childElementCount > 0) continue
+      const source = host.dataset.mermaidSrc ?? ''
+      host.dataset.mermaidStatus = 'rendering'
 
       if (isFlowchart(source)) {
-        const host = document.createElement('div')
         host.className = 'mermaid-flow-host'
-        pre.replaceWith(host)
         const root = createRoot(host)
         mountedRoots.push(root)
         root.render(<MermaidFlow source={source} />)
         continue
       }
 
-      ;(async () => {
+      void (async (h: HTMLElement, src: string) => {
         try {
-          const svg = await renderMermaid(source)
-          if (cancelled) return
-          const wrap = document.createElement('div')
-          wrap.className = 'mermaid'
-          wrap.innerHTML = svg
-          pre.replaceWith(wrap)
+          const svg = await renderMermaid(src)
+          if (cancelled) {
+            // Don't clobber whatever's on screen, but flip back to "pending"
+            // so the next effect run can retry against this same host.
+            if (h.dataset.mermaidStatus === 'rendering') {
+              h.dataset.mermaidStatus = 'pending'
+            }
+            return
+          }
+          h.className = 'mermaid'
+          h.innerHTML = svg
+          h.dataset.mermaidStatus = 'done'
         } catch (err) {
-          if (cancelled) return
-          const box = document.createElement('div')
-          box.className = 'mermaid-error'
-          box.textContent = `Mermaid: ${err instanceof Error ? err.message : String(err)}`
-          pre.replaceWith(box)
+          if (cancelled) {
+            if (h.dataset.mermaidStatus === 'rendering') {
+              h.dataset.mermaidStatus = 'pending'
+            }
+            return
+          }
+          h.className = 'mermaid-error'
+          h.textContent = `Mermaid: ${err instanceof Error ? err.message : String(err)}`
+          h.dataset.mermaidStatus = 'done'
         }
-      })()
+      })(host, source)
     }
+
     return () => {
       cancelled = true
-      // Tear down React roots before the host nodes get clobbered by the next innerHTML
-      // assignment; otherwise React warns about unmounted components on stale DOM.
+      // eslint-disable-next-line no-console
+      console.log('[mermaid-debug] mermaid effect CLEANUP', {
+        roots: mountedRoots.length,
+        hosts: el.querySelectorAll('div[data-mermaid-status]').length,
+      })
+      // eslint-disable-next-line no-console
+      console.trace('[mermaid-debug] cleanup by')
+      // Tear down React roots before the host nodes get clobbered by the next
+      // innerHTML assignment; otherwise React warns about unmounted components
+      // on stale DOM. Defer the unmount via queueMicrotask: React 19 forbids
+      // synchronously unmounting a root from inside a render/commit phase, and
+      // useEffect cleanups can fire mid-commit when a parent updates.
       for (const root of mountedRoots) {
-        try {
-          root.unmount()
-        } catch {
-          /* root may already be detached if the document was replaced */
-        }
+        queueMicrotask(() => {
+          try {
+            root.unmount()
+          } catch {
+            /* root may already be detached if the document was replaced */
+          }
+        })
+      }
+      // Mark in-flight hosts as "pending" so the next effect run picks them up.
+      // Deliberately don't clear className / innerHTML here: if the async
+      // landed a frame before this cleanup, we'd erase a perfectly good SVG.
+      // The retry path in the async (and the second pass above) handle the
+      // case where we genuinely need to re-render.
+      for (const host of Array.from(
+        el.querySelectorAll<HTMLElement>('div[data-mermaid-status="rendering"]'),
+      )) {
+        host.dataset.mermaidStatus = 'pending'
       }
     }
-  }, [html])
+    // `csvText` is in the dep list so this re-runs when the article element is
+    // unmounted (csv view) and later re-mounted (back to markdown). Without it,
+    // the second mount inherits the same `html` string and the effect never
+    // fires, leaving the fresh DOM's <pre><code class="language-mermaid"> blocks
+    // un-hoisted — and `pre:has(...)` CSS hides them.
+  }, [html, csvText])
 
   // Intercept clicks on links inside the md and turn them into in-viewer navigation.
   useEffect(() => {
@@ -581,9 +681,10 @@ export function Preview({
       })()
     : undefined
   const headerText =
-    source.kind === 'in-root' ? source.path : `📥 ${source.name}（外部ファイル）`
-  const activeCommit =
-    cursorSha && commits ? commits.find((c) => c.sha === cursorSha) ?? null : null
+    source.kind === 'in-root' ? source.path : `${source.name}（外部ファイル）`
+  // The present button only makes sense for markdown — code/CSV views aren't decks.
+  const isMarkdownSource =
+    source.kind === 'in-root' ? isMarkdownPath(source.path) : isMarkdownPath(source.name)
   return (
     <div className="preview-wrap" ref={swipeRef}>
       <div className="preview" ref={scrollRef}>
@@ -621,46 +722,86 @@ export function Preview({
                 }
                 aria-label="再読込"
               >
-                ↻
+                <svg
+                  className="nav-btn-svg"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4a8 8 0 1 0 7.74 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                </svg>
               </button>
             )}
           </div>
-          <span className="path-text">{headerText}</span>
-          {kind === 'in-root' && (
-            <button
-              className={`nav-btn time-btn${timeOpen ? ' active' : ''}`}
-              onClick={() => setTimeOpen((o) => !o)}
-              title="タイムマシン: 過去のバージョンを覗く"
-              aria-pressed={timeOpen}
-              aria-label="タイムマシン"
-            >
-              🕰
-            </button>
-          )}
-          {activeCommit && (
-            <span className="time-badge" title={activeCommit.subject}>
-              {formatDateShort(activeCommit.dateISO)} · {activeCommit.shortSha}
+          {source.kind === 'external' && (
+            <span className="path-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <path d="M19 3H5c-1.11 0-2 .89-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.11-.89-2-2-2zm0 12h-4c0 1.66-1.35 3-3 3s-3-1.34-3-3H5V5h14v10zm-3-5h-2V7h-4v3H8l4 4 4-4z" />
+              </svg>
             </span>
           )}
+          <span className="path-text">{headerText}</span>
+          <div className="doc-actions">
+            {onPresent && isMarkdownSource && (
+              <button
+                className="nav-btn present-btn"
+                onClick={() => onPresent()}
+                title="プレゼン: 見出しごとにスライド表示 (⌘P)"
+                aria-label="プレゼンを開始"
+              >
+                <svg
+                  className="nav-btn-svg"
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  {/* Material "slideshow": a play triangle inside a screen frame. */}
+                  <path d="M10 8v8l5-4-5-4zm9-5H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z" />
+                </svg>
+              </button>
+            )}
+            {onToggleFocus && (
+              <button
+                className={`nav-btn focus-btn${focusMode ? ' active' : ''}`}
+                onClick={() => onToggleFocus()}
+                title={focusMode ? '集中モードを解除 (Esc)' : '集中モード: このウィンドウだけ全画面'}
+                aria-pressed={focusMode}
+                aria-label={focusMode ? '集中モードを解除' : '集中モード'}
+              >
+                <svg
+                  className="nav-btn-svg"
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  {focusMode ? (
+                    <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+                  ) : (
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                  )}
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
-        {timeOpen && kind === 'in-root' && (
-          <TimeMachineBar
-            rootAbsPath={rootAbsPath}
-            rootName={rootName}
-            absoluteFilePath={absoluteFilePath}
-            historyStatus={historyStatus}
-            historyError={historyError}
-            commits={commits}
-            cursorSha={cursorSha}
-            onCursor={setCursorSha}
-            onLinkRoot={onLinkRoot}
+        {csvText !== null ? (
+          <CsvTable
+            source={csvText}
+            storageKey={csvStorageKey(kind, path, externalAbsPath, externalName)}
+          />
+        ) : (
+          <article
+            ref={containerRef}
+            className="markdown-body"
+            dangerouslySetInnerHTML={{ __html: html }}
           />
         )}
-        <article
-          ref={containerRef}
-          className="markdown-body"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
       </div>
       {gesture && (
         <div
@@ -676,185 +817,21 @@ export function Preview({
 }
 
 /**
- * Compact date for inline badges (e.g. "2024/03/14"). Falls back to the raw
- * ISO string if parsing fails — better to show something than nothing.
+ * Build the localStorage key for a CSV's per-row check state. Prefers the
+ * in-root relative path (stable across sessions and survives a root re-pick
+ * to the same folder), then the external file's absolute OS path, and finally
+ * the external file's basename as a last-ditch fallback. Returns null when
+ * none of those identifiers exist — the table then keeps state in memory only.
  */
-function formatDateShort(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}/${m}/${day}`
+function csvStorageKey(
+  kind: 'in-root' | 'external' | null,
+  path: string | null,
+  externalAbsPath: string | null,
+  externalName: string | null,
+): string | null {
+  if (kind === 'in-root' && path) return `in-root:${path}`
+  if (kind === 'external' && externalAbsPath) return `abs:${externalAbsPath}`
+  if (kind === 'external' && externalName) return `name:${externalName}`
+  return null
 }
 
-interface TimeMachineBarProps {
-  rootAbsPath: string | null
-  rootName: string | null
-  absoluteFilePath: string | null
-  historyStatus: 'idle' | 'loading' | 'error'
-  historyError: string | null
-  commits: MdexpGitCommit[] | null
-  cursorSha: string | null
-  onCursor: (sha: string | null) => void
-  onLinkRoot?: () => Promise<string | null>
-}
-
-/**
- * Slider that walks the active file through its git history. The rightmost
- * stop is always "現在" (working tree); slots to the left are commits, newest
- * first. Selecting "現在" clears the cursor so the FSA-backed read path takes
- * over again.
- *
- * Three degenerate states get inline messages rather than a slider:
- *   • the root isn't linked yet           → prompt the user to link it
- *   • git history is being fetched        → status spinner
- *   • the file isn't tracked / git failed → friendly explanation
- */
-function TimeMachineBar({
-  rootAbsPath,
-  rootName,
-  absoluteFilePath,
-  historyStatus,
-  historyError,
-  commits,
-  cursorSha,
-  onCursor,
-  onLinkRoot,
-}: TimeMachineBarProps) {
-  // Unlinked root → prompt.
-  if (!rootAbsPath || !absoluteFilePath) {
-    return (
-      <div className="time-bar time-bar-prompt">
-        <span className="time-bar-msg">
-          {rootName ? <>「{rootName}」</> : 'このフォルダ'}
-          の場所を教えてくれたら、過去の自分を、呼び戻せる、よ。
-        </span>
-        <button className="primary time-link-btn" onClick={() => onLinkRoot?.()}>
-          フォルダを指す
-        </button>
-      </div>
-    )
-  }
-  if (historyStatus === 'error') {
-    return (
-      <div className="time-bar time-bar-prompt time-bar-error">
-        <span className="time-bar-msg">
-          履歴を、たどれません。{historyError ? <> — {historyError}</> : null}
-        </span>
-      </div>
-    )
-  }
-  // `commits === null` covers both the initial render before the load effect runs
-  // and the in-flight loading window — treat both as "spinner-ish".
-  if (commits === null || historyStatus === 'loading') {
-    return (
-      <div className="time-bar time-bar-prompt">
-        <span className="time-bar-msg">過去を、たぐっています…</span>
-      </div>
-    )
-  }
-  if (commits.length === 0) {
-    return (
-      <div className="time-bar time-bar-prompt">
-        <span className="time-bar-msg">
-          このファイルには、まだ……コミットの足跡が、ない、みたい。
-        </span>
-      </div>
-    )
-  }
-
-  // Slot mapping: 0..commits.length-1 → oldest..newest commit, commits.length → working tree.
-  // The slider runs left-to-right as time forward, so the highest value is "現在".
-  const max = commits.length
-  const currentSlot = cursorSha
-    ? commits.findIndex((c) => c.sha === cursorSha)
-    : max
-  const slotValue = currentSlot < 0 ? max : currentSlot
-  const isLatest = slotValue === max
-  const activeCommit = isLatest ? null : commits[slotValue]
-
-  const onSlide = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = Number(e.target.value)
-    if (!Number.isFinite(v)) return
-    if (v >= max) {
-      onCursor(null)
-      return
-    }
-    const c = commits[v]
-    if (c) onCursor(c.sha)
-  }
-
-  const oldest = commits[0]
-  const newest = commits[commits.length - 1]
-  return (
-    <div className="time-bar">
-      <button
-        className="time-step-btn"
-        onClick={() => {
-          if (slotValue > 0) {
-            const c = commits[slotValue - 1]
-            if (c) onCursor(c.sha)
-          }
-        }}
-        disabled={slotValue <= 0}
-        title="一つ古い版へ"
-        aria-label="一つ古い版"
-      >
-        ‹
-      </button>
-      <input
-        className="time-slider"
-        type="range"
-        min={0}
-        max={max}
-        step={1}
-        value={slotValue}
-        onChange={onSlide}
-        aria-label="バージョン"
-      />
-      <button
-        className="time-step-btn"
-        onClick={() => {
-          if (slotValue < max) {
-            const next = slotValue + 1
-            if (next >= max) onCursor(null)
-            else {
-              const c = commits[next]
-              if (c) onCursor(c.sha)
-            }
-          }
-        }}
-        disabled={slotValue >= max}
-        title="一つ新しい版へ"
-        aria-label="一つ新しい版"
-      >
-        ›
-      </button>
-      <div className="time-label">
-        {isLatest ? (
-          <span className="time-label-now">現在（作業ツリー）</span>
-        ) : activeCommit ? (
-          <span className="time-label-commit" title={activeCommit.subject}>
-            <strong>{formatDateShort(activeCommit.dateISO)}</strong>
-            <span className="time-sha">{activeCommit.shortSha}</span>
-            <span className="time-subject">{activeCommit.subject}</span>
-          </span>
-        ) : null}
-      </div>
-      {!isLatest && (
-        <button
-          className="time-now-btn"
-          onClick={() => onCursor(null)}
-          title="現在に戻る"
-        >
-          ⤴ 現在
-        </button>
-      )}
-      <div className="time-range" aria-hidden>
-        <span>{formatDateShort(oldest.dateISO)}</span>
-        <span>{formatDateShort(newest.dateISO)}</span>
-      </div>
-    </div>
-  )
-}

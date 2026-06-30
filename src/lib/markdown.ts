@@ -2,6 +2,7 @@ import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import anchor from 'markdown-it-anchor'
 import hljs from 'highlight.js'
+import { extractFrontmatter, renderFrontmatterTable } from './frontmatter'
 
 /**
  * A markdown-it instance roughly equivalent to GFM.
@@ -32,9 +33,16 @@ export const md: MarkdownIt = new MarkdownIt({
   .use(taskLists, { label: true, enabled: true })
   .use(anchor, { permalink: false })
 
-/** Convert a Markdown string to HTML. */
+/**
+ * Convert a Markdown string to HTML. If the source begins with a YAML frontmatter
+ * block, that block is parsed and rendered as a GH-style key/value table above
+ * the rest of the document. Malformed frontmatter falls back to plain rendering
+ * (the `---` fences pass through as a thematic break).
+ */
 export function renderMarkdown(src: string): string {
-  return md.render(src)
+  const { data, body } = extractFrontmatter(src)
+  const fm = data !== null ? renderFrontmatterTable(data) : ''
+  return fm + md.render(body)
 }
 
 /**

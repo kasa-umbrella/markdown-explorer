@@ -1,0 +1,26 @@
+# markdown-explorer - Root Taskfile
+# ローカルでの起動・インストール操作を `task` に集約する。
+# `task --list` でターゲット一覧を確認できる。
+#
+# 前提: go-task (https://taskfile.dev/) v3 以上
+#   brew install go-task/tap/go-task
+
+version: "3"
+
+tasks:
+  default:
+    desc: "task --list と等価。利用可能なターゲット一覧を表示する"
+    cmds:
+      - task --list
+
+  update:
+    desc: "git pull で最新を取り込み、ビルドして /Applications の markdown-explorer.app を入れ替え、起動し直す"
+    platforms: [darwin]
+    cmds:
+      - git pull
+      - npm run install:local
+
+  dev:
+    desc: "Vite 開発サーバを起動する（npm run dev）"
+    cmds:
+      - npm run dev

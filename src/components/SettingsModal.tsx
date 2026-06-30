@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { SETTINGS_RANGES, type Settings, type ThemePref } from '../hooks/useSettings'
 import { parseExtensionList } from '../lib/extensions'
+import { FONTS } from '../lib/fonts'
 
 interface Props {
   settings: Settings
@@ -59,6 +60,18 @@ export function SettingsModal({ settings, onUpdate, onReset, onClose }: Props) {
         </section>
 
         <section className="settings-section">
+          <h3>フォント</h3>
+          <FontPicker
+            value={settings.mainFont}
+            onChange={(id) => onUpdate({ mainFont: id })}
+          />
+          <p className="settings-help">
+            アプリ全体（サイドバー・タブ・本文）の表示フォントを切り替えます。
+            コードブロックなどの等幅フォントはそのままです。
+          </p>
+        </section>
+
+        <section className="settings-section">
           <h3>メイン画面</h3>
           <Slider
             label="文字サイズ"
@@ -97,6 +110,15 @@ export function SettingsModal({ settings, onUpdate, onReset, onClose }: Props) {
           <p className="settings-help">
             .md などの Markdown は常に表示されます。ここで追加した拡張子のファイルは
             シンタックスハイライト付きでプレビューされます。
+          </p>
+          <Toggle
+            label="隠しファイル / フォルダを表示"
+            checked={settings.showHidden}
+            onChange={(checked) => onUpdate({ showHidden: checked })}
+          />
+          <p className="settings-help">
+            「.」始まりの項目（.claude / .github など）をツリーに表示します。
+            .git だけは大量のオブジェクトを抱えるため常に除外されます。
           </p>
         </section>
 
@@ -183,6 +205,47 @@ function ThemePicker({ value, onChange }: ThemePickerProps) {
             onClick={() => onChange(o.id)}
           >
             {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+interface FontPickerProps {
+  value: string
+  onChange: (id: string) => void
+}
+
+/**
+ * Vertical list of the selectable body fonts. Each row previews itself in its own face,
+ * so on mount we eagerly load every face — otherwise the not-yet-picked rows would fall
+ * back to the system font and the preview would be a lie.
+ */
+function FontPicker({ value, onChange }: FontPickerProps) {
+  useEffect(() => {
+    for (const font of FONTS) void font.load()
+  }, [])
+
+  return (
+    <div className="settings-row settings-row-font">
+      <span className="settings-label">フォント</span>
+      <div className="font-picker" role="radiogroup" aria-label="フォント">
+        {FONTS.map((font) => (
+          <button
+            key={font.id}
+            type="button"
+            role="radio"
+            aria-checked={value === font.id}
+            className={`font-pick${value === font.id ? ' active' : ''}`}
+            style={{ fontFamily: font.stack }}
+            onClick={() => onChange(font.id)}
+          >
+            <span className="font-pick-main">
+              <span className="font-pick-name">{font.label}</span>
+              <span className="font-pick-tag">{font.tag}</span>
+            </span>
+            <span className="font-pick-sample">あア亜 Markdown 123</span>
           </button>
         ))}
       </div>
