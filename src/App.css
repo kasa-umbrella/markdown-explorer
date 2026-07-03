@@ -361,6 +361,52 @@ body.resizing .resize-handle {
   color: var(--git-untracked);
 }
 
+/* ── In-document git-diff markers (preview body) ──
+ * A block that changed since HEAD gets a colored bar in the left gutter plus a faint
+ * wash: green = added, amber = changed. Deletions have no surviving block, so they
+ * show as a short red tick where the removed content used to be — via ::after, so a
+ * block can carry both a change bar and a deletion tick at once. */
+.markdown-body [data-git-mark] {
+  position: relative;
+}
+.markdown-body [data-git-mark]::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 2px;
+}
+.markdown-body .git-diff-added::before {
+  background: var(--git-added);
+}
+.markdown-body .git-diff-changed::before {
+  background: var(--git-modified);
+}
+.markdown-body .git-diff-added {
+  background: color-mix(in srgb, var(--git-added) 9%, transparent);
+}
+.markdown-body .git-diff-changed {
+  background: color-mix(in srgb, var(--git-modified) 10%, transparent);
+}
+.markdown-body .git-diff-del-before::after,
+.markdown-body .git-diff-del-end::after {
+  content: '';
+  position: absolute;
+  left: -11px;
+  width: 5px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--git-deleted);
+}
+.markdown-body .git-diff-del-before::after {
+  top: -1px;
+}
+.markdown-body .git-diff-del-end::after {
+  bottom: -1px;
+}
+
 /* ───────── Main ───────── */
 .main {
   position: relative;
@@ -629,6 +675,165 @@ body.resizing .resize-handle {
   width: 14px;
   height: 14px;
   color: var(--muted);
+}
+
+/* ───────── Sticky heading ─────────
+   Overlay pinned just beneath the path bar (its `top` is set inline to the measured
+   bar height). Shows the heading of the section the reader is currently scrolled into,
+   updating live as headings scroll past — regardless of level (# or ##, whichever is
+   the nearest one above). Clicking it jumps back to that heading. Absolutely positioned
+   inside .preview-wrap so showing/hiding it never shifts the document layout. */
+.sticky-heading {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 5px 24px 5px 12px;
+  font-size: 12px;
+  background: var(--panel-overlay);
+  backdrop-filter: blur(4px);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  white-space: nowrap;
+  animation: sticky-heading-in 0.14s ease-out;
+}
+
+/* Small accent dot, a quiet "you are here" marker before the heading text. */
+.sticky-heading::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.crumb:disabled {
+  cursor: default;
+}
+
+.crumb-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Re-runs whenever the keyed span remounts (i.e. the active section changes),
+     giving the swap a quick fade so the update reads as motion, not a jump. */
+  animation: crumb-swap 0.18s ease-out;
+}
+
+.crumb:not(:disabled):hover .crumb-text {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+@keyframes sticky-heading-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes crumb-swap {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ───────── In-document find (⌘F) ─────────
+   Floating bar pinned to the top-right of the preview, just beneath the doc-path
+   bar (its `top` is set inline to the measured bar height). Matches are painted
+   with the CSS Custom Highlight API — see FindBar.tsx — so the colors live in the
+   ::highlight rules below. Sits above the sticky-heading overlay (z-index). */
+.find-bar {
+  position: absolute;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel-overlay-strong);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px var(--shadow-md);
+  animation: sticky-heading-in 0.14s ease-out;
+}
+
+.find-input {
+  width: 190px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.find-bar.no-match .find-input {
+  color: var(--danger);
+}
+
+.find-count {
+  flex: none;
+  min-width: 52px;
+  padding-right: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Match highlights. Literal colors per theme (not var()) — custom-property
+   resolution inside highlight pseudos has been flaky across Chromium versions,
+   and a wrong-but-visible color beats an invisible highlight. */
+::highlight(find-match) {
+  background-color: #ffe58f;
+  color: #1f2328;
+}
+
+::highlight(find-current) {
+  background-color: #ff9632;
+  color: #1f2328;
+}
+
+:root[data-theme='dark'] ::highlight(find-match) {
+  background-color: #6b5b1f;
+  color: #e6edf3;
+}
+
+:root[data-theme='dark'] ::highlight(find-current) {
+  background-color: #d29922;
+  color: #0f1419;
 }
 
 .preview.empty,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { enrichSlide, fmtClock, type PresentCtx } from '../lib/slideDom'
 import type { PortableSlide } from '../lib/portableDeck'
+import { useRawHtml } from '../lib/rawHtml'
 import '../App.css'
 
 /**
@@ -126,6 +127,13 @@ export function PresenterWindow() {
 
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000))
 
+  // Stable {__html} wrappers — see useRawHtml. The 500ms timer tick re-renders this
+  // window constantly; inline objects would make React 19 re-set the slides'
+  // innerHTML on every tick, wiping enrichSlide's mermaid rendering.
+  const currentBodyHtml = useRawHtml(current?.bodyHtml ?? '')
+  const currentNotesHtml = useRawHtml(current?.hasNotes ? current.notesHtml : '')
+  const nextBodyHtml = useRawHtml(next?.bodyHtml ?? '')
+
   if (!current) {
     return (
       <div className="presentation presenter-window">
@@ -145,7 +153,7 @@ export function PresenterWindow() {
             <article
               ref={stageRef}
               className="markdown-body slide-body"
-              dangerouslySetInnerHTML={{ __html: current.bodyHtml }}
+              dangerouslySetInnerHTML={currentBodyHtml}
             />
           </div>
         </div>
@@ -160,7 +168,7 @@ export function PresenterWindow() {
             <div className="presenter-label">発表者ノート</div>
             <div
               className="notes-body markdown-body"
-              dangerouslySetInnerHTML={{ __html: current.hasNotes ? current.notesHtml : '' }}
+              dangerouslySetInnerHTML={currentNotesHtml}
             />
           </div>
           <div className="presenter-next">
@@ -172,7 +180,7 @@ export function PresenterWindow() {
                 <article
                   ref={nextRef}
                   className="markdown-body slide-body"
-                  dangerouslySetInnerHTML={{ __html: next.bodyHtml }}
+                  dangerouslySetInnerHTML={nextBodyHtml}
                 />
               </div>
             ) : (

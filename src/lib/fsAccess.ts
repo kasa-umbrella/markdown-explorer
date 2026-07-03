@@ -1,6 +1,7 @@
 import { get, set, del } from 'idb-keyval'
 import type { FileEntry, NativeFileRef, ScanResult, TreeNode } from '../types'
 import { matchesViewable } from './extensions'
+import { decodeText } from './encoding'
 
 /** idb key for the FSA-picker handle of the last-opened root. */
 const HANDLE_KEY = 'rootDirHandle'
@@ -287,10 +288,13 @@ export async function readTextFile(
     if (!api?.readTextFileByPath) {
       throw new Error('Native bridge unavailable; cannot read by absolute path')
     }
+    // Encoding auto-detection happens in the main process (see the IPC handler).
     return api.readTextFileByPath(entry.absPath)
   }
+  // Read bytes, not file.text(): the latter is locked to UTF-8 and mangles
+  // Shift_JIS. decodeText() sniffs the encoding instead.
   const file = await entry.getFile()
-  return file.text()
+  return decodeText(await file.arrayBuffer())
 }
 
 /** Read one file from the map and return a Blob URL (for images, etc.). */

@@ -1,6 +1,6 @@
 /** APIs exposed to the renderer by electron/preload.ts via contextBridge. */
 interface MdexpApi {
-  /** Read an absolute OS path as UTF-8 text (handled in the main process). */
+  /** Read an absolute OS path as text, auto-detecting UTF-8 vs Shift_JIS (handled in the main process). */
   readTextFileByPath(path: string): Promise<string>
   /**
    * Read an absolute OS path as raw bytes. The renderer wraps the buffer in a
@@ -47,6 +47,8 @@ interface MdexpApi {
   onReloadActiveTab(handler: () => void): () => void
   /** Close the BrowserWindow (used as the Cmd+W fallback when no tabs remain). */
   closeWindow(): void
+  /** Open another full explorer window (also available on Cmd/Ctrl+N). */
+  newWindow(): void
   /**
    * Return the absolute OS path of a `File` object. Works for File instances
    * obtained from FSA's `FileSystemFileHandle.getFile()`, so we can derive the
@@ -61,6 +63,14 @@ interface MdexpApi {
    * Resolves to null when the root is outside any git repo or git is unavailable.
    */
   gitStatus(absoluteRootPath: string): Promise<Record<string, MdexpGitStatusCode> | null>
+  /**
+   * The committed (HEAD) contents of a single file, so the preview can mark which
+   * blocks changed since the last commit. Resolves to:
+   *   - null              → the file isn't inside a git repo (or git is unavailable)
+   *   - { head: string }  → the committed text to diff the current file against
+   *   - { head: null }    → a new / untracked file with no HEAD revision (all added)
+   */
+  gitFileDiff(absoluteFilePath: string): Promise<{ head: string | null } | null>
   /** Open (or focus) the detached presenter window. Main window only. */
   presenterOpen(): void
   /** Close the detached presenter window. Main window only. */

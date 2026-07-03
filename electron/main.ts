@@ -7,9 +7,10 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type ElectronModule from 'electron'
+import { decodeText } from '../src/lib/encoding'
 
 const require = createRequire(import.meta.url)
-const { app, BrowserWindow, ipcMain, protocol, net, session } =
+const { app, BrowserWindow, Menu, ipcMain, protocol, net, session } =
   require('electron') as typeof ElectronModule
 
 const execFileP = promisify(execFile)
@@ -50,11 +51,31 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-let win: BrowserWindow | null = null
+// All open main windows, in creation order (Set iteration preserves insertion).
+// The renderer is multi-window capable: each entry is a full, independent explorer.
+const mainWindows = new Set<BrowserWindow>()
+// webContents that have finished their first load and can receive open-file pushes.
+const readyWebContents = new WeakSet<Electron.WebContents>()
 // The detached presenter window (true dual-screen). It loads the same renderer
 // bundle with `?role=presenter`; messages are relayed between it and the main
 // window through the present:* / to-* IPC channels below.
 let presenterWin: BrowserWindow | null = null
+// The main window that opened the presenter. Relays are scoped to this pair so a
+// second explorer window can't accidentally drive someone else's presentation.
+let presenterOwner: BrowserWindow | null = null
+
+/**
+ * The main window that OS-level events (Finder opens, CLI paths) should land in:
+ * the focused one if it's a main window, otherwise the most recently created one.
+ * Returns null when no main window exists (macOS with all windows closed).
+ */
+function targetWindow(): BrowserWindow | null {
+  const focused = BrowserWindow.getFocusedWindow()
+  if (focused && mainWindows.has(focused)) return focused
+  let last: BrowserWindow | null = null
+  for (const w of mainWindows) last = w
+  return last
+}
 
 // "Open With" / double-click handoff from Finder. The event can fire before app.ready
 // on a cold launch, so the handler must be registered at module top, and incoming paths
@@ -66,17 +87,17 @@ const pendingOpenPaths: string[] = []
  * via macOS folder-drops once Info.plist declares `public.folder` support.
  */
 const pendingOpenDirs: string[] = []
-let rendererReady = false
 
 function flushPending(): void {
-  if (!rendererReady || !win) return
+  const target = targetWindow()
+  if (!target || !readyWebContents.has(target.webContents)) return
   while (pendingOpenPaths.length > 0) {
     const p = pendingOpenPaths.shift()!
-    win.webContents.send('mdexp:open-file', p)
+    target.webContents.send('mdexp:open-file', p)
   }
   while (pendingOpenDirs.length > 0) {
     const p = pendingOpenDirs.shift()!
-    win.webContents.send('mdexp:open-dir', p)
+    target.webContents.send('mdexp:open-dir', p)
   }
 }
 
@@ -148,20 +169,23 @@ if (!gotLock) {
 
 app.on('second-instance', (_event, argv) => {
   // A second `mdexp /foo` arrived. Pull the path out of the new argv, route into the
-  // pending queue, and focus the existing window so the user sees the result.
+  // pending queue, and focus the target window so the user sees the result. On macOS
+  // the app can be alive with zero windows — spawn one so the path has somewhere to go.
   void (async () => {
     const incoming = await findPathInArgv(argv)
     if (incoming) await routeIncomingPath(incoming)
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.focus()
+    const target = targetWindow()
+    if (target) {
+      if (target.isMinimized()) target.restore()
+      target.focus()
+    } else {
+      createWindow()
     }
   })()
 })
 
-function createWindow(): void {
-  rendererReady = false
-  win = new BrowserWindow({
+function createWindow(): BrowserWindow {
+  const win = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Markdown Explorer',
@@ -171,13 +195,14 @@ function createWindow(): void {
       preload: PRELOAD,
     },
   })
+  mainWindows.add(win)
 
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error(`[main] load failed: ${code} ${desc} (${url})`)
   })
 
   win.webContents.on('did-finish-load', () => {
-    rendererReady = true
+    readyWebContents.add(win.webContents)
     flushPending()
   })
 
@@ -187,6 +212,7 @@ function createWindow(): void {
   // Cmd/Ctrl+R is similarly intercepted so it reloads the active tab's content
   // from disk instead of the whole BrowserWindow. Shift+R is left alone so the
   // default "force reload" still works for dev.
+  // Cmd/Ctrl+N opens another full explorer window.
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     if (input.alt || input.shift) return
@@ -195,20 +221,27 @@ function createWindow(): void {
     const key = input.key.toLowerCase()
     if (key === 'w') {
       event.preventDefault()
-      win?.webContents.send('mdexp:close-active-tab')
+      win.webContents.send('mdexp:close-active-tab')
       return
     }
     if (key === 'r') {
       event.preventDefault()
-      win?.webContents.send('mdexp:reload-active-tab')
+      win.webContents.send('mdexp:reload-active-tab')
+      return
+    }
+    if (key === 'n') {
+      event.preventDefault()
+      createWindow()
     }
   })
 
   win.on('closed', () => {
-    rendererReady = false
-    win = null
-    // The presenter window is meaningless without its main window; tear it down too.
-    if (presenterWin && !presenterWin.isDestroyed()) presenterWin.close()
+    mainWindows.delete(win)
+    // The presenter window is meaningless without the window it mirrors; other
+    // explorer windows keep living independently.
+    if (presenterOwner === win && presenterWin && !presenterWin.isDestroyed()) {
+      presenterWin.close()
+    }
   })
 
   if (DEV_SERVER_URL) {
@@ -217,14 +250,19 @@ function createWindow(): void {
   } else {
     win.loadURL('app://local/index.html')
   }
+  return win
 }
 
 /**
- * Open (or focus) the detached presenter window. It loads the same renderer with
- * `?role=presenter`, which mounts the lightweight presenter mirror. When the user
- * closes it, the main window is told so its in-app state can follow.
+ * Open (or focus) the detached presenter window on behalf of `owner`. It loads the
+ * same renderer with `?role=presenter`, which mounts the lightweight presenter
+ * mirror. There is a single presenter at a time; if another explorer window starts
+ * presenting, ownership moves to it (that window pushes its own deck-init next).
+ * When the user closes the presenter, the owning window is told so its in-app
+ * state can follow.
  */
-function createPresenterWindow(): void {
+function createPresenterWindow(owner: BrowserWindow): void {
+  presenterOwner = owner
   if (presenterWin && !presenterWin.isDestroyed()) {
     presenterWin.focus()
     return
@@ -245,7 +283,11 @@ function createPresenterWindow(): void {
   presenterWin.loadURL(target)
   presenterWin.on('closed', () => {
     presenterWin = null
-    win?.webContents.send('mdexp:presenter-closed')
+    const owner = presenterOwner
+    presenterOwner = null
+    if (owner && !owner.isDestroyed()) {
+      owner.webContents.send('mdexp:presenter-closed')
+    }
   })
 }
 
@@ -320,7 +362,9 @@ app.whenReady().then(async () => {
     if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
       throw new Error('expected an absolute file path')
     }
-    return readFile(filePath, 'utf8')
+    // Read raw bytes and auto-detect UTF-8 vs Shift_JIS rather than assuming UTF-8,
+    // so legacy Japanese files (Excel CSVs, etc.) don't come back as mojibake.
+    return decodeText(await readFile(filePath))
   })
 
   // Read an absolute file path on disk and return its raw bytes.
@@ -360,38 +404,53 @@ app.whenReady().then(async () => {
     },
   )
 
-  // Window-level settings driven by the renderer's settings UI.
-  ipcMain.on('mdexp:set-opacity', (_e, opacity: unknown) => {
-    if (!win) return
+  // Window-level settings driven by the renderer's settings UI. Each handler acts
+  // on the window that sent the message, so every explorer window is independent.
+  ipcMain.on('mdexp:set-opacity', (e, opacity: unknown) => {
+    const sender = BrowserWindow.fromWebContents(e.sender)
+    if (!sender) return
     const n = typeof opacity === 'number' ? opacity : NaN
     // setOpacity ignores anything < 0 or > 1, but we clamp to a sane floor so the
     // window never becomes effectively invisible (and untouchable) by accident.
-    if (Number.isFinite(n)) win.setOpacity(Math.min(1, Math.max(0.2, n)))
+    if (Number.isFinite(n)) sender.setOpacity(Math.min(1, Math.max(0.2, n)))
   })
 
-  ipcMain.on('mdexp:set-always-on-top', (_e, flag: unknown) => {
-    if (!win) return
-    win.setAlwaysOnTop(Boolean(flag))
+  ipcMain.on('mdexp:set-always-on-top', (e, flag: unknown) => {
+    BrowserWindow.fromWebContents(e.sender)?.setAlwaysOnTop(Boolean(flag))
   })
 
   // Fallback close used when the renderer has no tabs left to close on Cmd+W.
-  ipcMain.on('mdexp:close-window', () => {
-    win?.close()
+  ipcMain.on('mdexp:close-window', (e) => {
+    BrowserWindow.fromWebContents(e.sender)?.close()
+  })
+
+  // Open another full explorer window (settings UI / renderer shortcut fallback).
+  ipcMain.on('mdexp:new-window', () => {
+    createWindow()
   })
 
   // ── Detached presenter window (dual-screen) ──
-  // Open/close requested by the main window's presentation overlay.
-  ipcMain.on('mdexp:presenter-open', () => createPresenterWindow())
-  ipcMain.on('mdexp:presenter-close', () => {
+  // Open/close requested by a main window's presentation overlay. The requesting
+  // window becomes the presenter's owner; relays below are scoped to that pair.
+  ipcMain.on('mdexp:presenter-open', (e) => {
+    const sender = BrowserWindow.fromWebContents(e.sender)
+    if (sender && mainWindows.has(sender)) createPresenterWindow(sender)
+  })
+  ipcMain.on('mdexp:presenter-close', (e) => {
+    const sender = BrowserWindow.fromWebContents(e.sender)
+    if (sender !== presenterOwner) return
     if (presenterWin && !presenterWin.isDestroyed()) presenterWin.close()
   })
-  // Relay deck / index pushes from the main window to the presenter window…
-  ipcMain.on('mdexp:to-presenter', (_e, msg: unknown) => {
+  // Relay deck / index pushes from the owning window to the presenter window…
+  ipcMain.on('mdexp:to-presenter', (e, msg: unknown) => {
+    if (BrowserWindow.fromWebContents(e.sender) !== presenterOwner) return
     presenterWin?.webContents.send('mdexp:presenter-msg', msg)
   })
   // …and navigation / exit commands (plus the initial "ready") back the other way.
   ipcMain.on('mdexp:to-main', (_e, msg: unknown) => {
-    win?.webContents.send('mdexp:main-msg', msg)
+    if (presenterOwner && !presenterOwner.isDestroyed()) {
+      presenterOwner.webContents.send('mdexp:main-msg', msg)
+    }
   })
 
   // Porcelain git status for the active root, returned as `{ path → status }`.
@@ -459,6 +518,55 @@ app.whenReady().then(async () => {
       return null
     }
   })
+
+  // Contents of a file at HEAD, for the preview's in-document git-diff markers.
+  //
+  // Given an absolute path to the file currently open in the preview, we run git
+  // *in that file's directory* and ask for `HEAD:./<basename>` — the `./` makes the
+  // pathspec resolve relative to the cwd, so it works whether the file sits at the
+  // repo root or deep in a sub-directory. Bytes are read raw (encoding: 'buffer')
+  // and decoded the same way working-tree files are, so Shift_JIS docs diff cleanly
+  // against their already-decoded current text.
+  //
+  // Returns:
+  //   - null                   → not inside a git repo (or git unavailable): no markers
+  //   - { head: string }       → the committed text to diff against
+  //   - { head: null }         → tracked path has no HEAD revision yet (new / untracked
+  //                              file): the renderer treats the whole document as added
+  ipcMain.handle('mdexp:git-file-diff', async (_e, filePath: unknown) => {
+    if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
+      throw new Error('expected an absolute file path')
+    }
+    const dir = path.dirname(filePath)
+    const base = path.basename(filePath)
+    try {
+      await execFileP('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'])
+    } catch {
+      return null
+    }
+    try {
+      const { stdout } = await execFileP(
+        'git',
+        ['-c', 'core.quotepath=false', 'show', `HEAD:./${base}`],
+        { cwd: dir, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+      )
+      return { head: decodeText(stdout as Buffer) }
+    } catch {
+      // No committed revision of this path — a newly added / untracked file.
+      return { head: null }
+    }
+  })
+
+  // macOS Dock icon context menu: mirror the Cmd+N / settings-modal entry point.
+  // Unlike the in-window shortcut this also works when every window is closed
+  // (the app stays alive on macOS), so it doubles as a "reopen" affordance.
+  if (process.platform === 'darwin') {
+    app.dock?.setMenu(
+      Menu.buildFromTemplate([
+        { label: '新しいウィンドウを開く', click: () => createWindow() },
+      ]),
+    )
+  }
 
   // Cold-launch CLI: if `mdexp /some/dir` started the app, capture that path now so
   // it's queued before the renderer asks for a flush. routeIncomingPath stats the

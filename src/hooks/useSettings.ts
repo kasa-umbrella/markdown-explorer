@@ -20,6 +20,17 @@ export interface Settings {
   mainMaxWidth: number
   /** Soft-wrap long lines inside fenced code blocks instead of horizontal scrolling. */
   wrapCode: boolean
+  /**
+   * Pin the current heading(s) to the top of the reading pane while scrolling, as a
+   * breadcrumb (#, ##, ### → ancestor chain). Lets you keep track of which section
+   * you're in deep inside a long document.
+   */
+  stickyHeadings: boolean
+  /**
+   * Mark blocks in the preview that changed since the last git commit (green = added,
+   * amber = changed, red tick = a deletion sits here). No-op for files outside a repo.
+   */
+  gitDiffMarkers: boolean
   /** Color scheme preference. See {@link ThemePref}. */
   theme: ThemePref
   /**
@@ -42,6 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
   mainLineHeight: 1.7,
   mainMaxWidth: 95,
   wrapCode: false,
+  stickyHeadings: true,
+  gitDiffMarkers: true,
   theme: 'system',
   extraExtensions: ['yaml', 'yml', 'json', 'csv'],
   showHidden: false,
@@ -93,6 +106,13 @@ function sanitize(raw: unknown): Settings {
       SETTINGS_RANGES.mainMaxWidth.max,
     ),
     wrapCode: Boolean(r.wrapCode),
+    // Default-on: a missing key (settings saved before this option existed) should
+    // keep the feature enabled, so treat `undefined` as the default rather than false.
+    stickyHeadings:
+      r.stickyHeadings === undefined ? DEFAULT_SETTINGS.stickyHeadings : Boolean(r.stickyHeadings),
+    // Default-on: pre-existing saved settings (no key) should still get the markers.
+    gitDiffMarkers:
+      r.gitDiffMarkers === undefined ? DEFAULT_SETTINGS.gitDiffMarkers : Boolean(r.gitDiffMarkers),
     theme: sanitizeTheme(r.theme),
     extraExtensions: sanitizeExtensions(r.extraExtensions),
     showHidden: Boolean(r.showHidden),

@@ -14,6 +14,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { parseFlowchart, type ParsedFlowchart } from '../lib/mermaidFlow'
 import { renderMermaid } from '../lib/mermaid'
+import { useRawHtml } from '../lib/rawHtml'
 
 interface Props {
   source: string
@@ -37,6 +38,10 @@ export function MermaidFlow({ source }: Props) {
     setStatus('loading')
     setFallbackSvg(null)
   }
+
+  // Stable {__html} so React 19's identity-diff doesn't re-set the fallback SVG's
+  // innerHTML on unrelated re-renders (see useRawHtml).
+  const fallbackHtml = useRawHtml(fallbackSvg ?? '')
 
   useEffect(() => {
     let cancelled = false
@@ -78,7 +83,7 @@ export function MermaidFlow({ source }: Props) {
       return (
         <div
           className="mermaid mermaid-flow-fallback"
-          dangerouslySetInnerHTML={{ __html: fallbackSvg }}
+          dangerouslySetInnerHTML={fallbackHtml}
         />
       )
     }

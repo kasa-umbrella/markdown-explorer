@@ -33,6 +33,22 @@ export const md: MarkdownIt = new MarkdownIt({
   .use(taskLists, { label: true, enabled: true })
   .use(anchor, { permalink: false })
 
+// Tag every block-level element with the source line range it came from
+// (`data-src-line` = first line, `data-src-end` = one past the last, both 0-based
+// and relative to the string passed to `md.render`). Purely informational for normal
+// display; the git-diff marker decorator in Preview reads it to map changed source
+// lines back onto rendered blocks. Covers open tokens (paragraph/heading/list/…)
+// plus standalone `hr`; nested list items are tagged too, so a single changed item
+// can be marked without lighting up its whole list.
+md.core.ruler.push('source_line_attr', (state) => {
+  for (const token of state.tokens) {
+    if (!token.map) continue
+    if (!token.type.endsWith('_open') && token.type !== 'hr') continue
+    token.attrSet('data-src-line', String(token.map[0]))
+    token.attrSet('data-src-end', String(token.map[1]))
+  }
+})
+
 /**
  * Convert a Markdown string to HTML. If the source begins with a YAML frontmatter
  * block, that block is parsed and rendered as a GH-style key/value table above

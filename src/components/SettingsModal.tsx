@@ -49,6 +49,16 @@ export function SettingsModal({ settings, onUpdate, onReset, onClose }: Props) {
             checked={settings.alwaysOnTop}
             onChange={(checked) => onUpdate({ alwaysOnTop: checked })}
           />
+          {window.mdexp && (
+            <>
+              <button className="ghost" onClick={() => window.mdexp?.newWindow()}>
+                新しいウィンドウを開く
+              </button>
+              <p className="settings-help">
+                ⌘N（Ctrl+N）でも開けます。透明度・手前表示はウィンドウごとに独立です。
+              </p>
+            </>
+          )}
         </section>
 
         <section className="settings-section">
@@ -99,6 +109,24 @@ export function SettingsModal({ settings, onUpdate, onReset, onClose }: Props) {
             checked={settings.wrapCode}
             onChange={(checked) => onUpdate({ wrapCode: checked })}
           />
+          <Toggle
+            label="見出しを上部に固定"
+            checked={settings.stickyHeadings}
+            onChange={(checked) => onUpdate({ stickyHeadings: checked })}
+          />
+          <p className="settings-help">
+            スクロール中、いま読んでいる位置の見出し（# / ## どれでも、直近の見出し）を
+            上部に固定表示します。スクロールに合わせて中身が切り替わり、クリックでその見出しへ移動できます。
+          </p>
+          <Toggle
+            label="git 差分を本文に表示"
+            checked={settings.gitDiffMarkers}
+            onChange={(checked) => onUpdate({ gitDiffMarkers: checked })}
+          />
+          <p className="settings-help">
+            git 管理下のファイルで、直近のコミット以降に変わった箇所を本文の左に色帯で示します
+            （緑＝追加 / 黄＝変更 / 赤＝削除あり）。ツールバーの差分ボタンでも切り替えられます。
+          </p>
         </section>
 
         <section className="settings-section">

@@ -3,9 +3,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 /**
- * Read a text file from an absolute OS path via the main process.
- * Used to handle drops from sources like VSCode that only provide the path,
- * not a File object.
+ * Read a text file from an absolute OS path via the main process. The main process
+ * auto-detects UTF-8 vs Shift_JIS. Used to handle drops from sources like VSCode
+ * that only provide the path, not a File object.
  */
 async function readTextFileByPath(path: string): Promise<string> {
   return ipcRenderer.invoke('mdexp:read-text-file', path)
@@ -124,6 +124,11 @@ function closeWindow(): void {
   ipcRenderer.send('mdexp:close-window')
 }
 
+/** Open another full explorer window (also available on Cmd/Ctrl+N). */
+function newWindow(): void {
+  ipcRenderer.send('mdexp:new-window')
+}
+
 /**
  * Resolve the absolute OS path of a File object. Works for File instances obtained
  * from `<input type=file>`, drag-drop, and — crucially for us — `FileSystemFileHandle.getFile()`.
@@ -145,6 +150,17 @@ async function gitStatus(
   absoluteRootPath: string,
 ): Promise<Record<string, GitStatusCode> | null> {
   return ipcRenderer.invoke('mdexp:git-status', absoluteRootPath)
+}
+
+/**
+ * The committed (HEAD) contents of a single file, used by the preview to mark which
+ * blocks changed since the last commit. Resolves to null when the file isn't inside
+ * a git repo; `{ head: null }` when it's a new / untracked file with no HEAD revision.
+ */
+async function gitFileDiff(
+  absoluteFilePath: string,
+): Promise<{ head: string | null } | null> {
+  return ipcRenderer.invoke('mdexp:git-file-diff', absoluteFilePath)
 }
 
 // ── Detached presenter window (dual-screen) ──
@@ -222,8 +238,10 @@ contextBridge.exposeInMainWorld('mdexp', {
   onCloseActiveTab,
   onReloadActiveTab,
   closeWindow,
+  newWindow,
   getPathForFile,
   gitStatus,
+  gitFileDiff,
   presenterOpen,
   presenterClose,
   sendToPresenter,

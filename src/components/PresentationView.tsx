@@ -3,6 +3,7 @@ import { buildDeck, type SplitStrategy } from '../lib/slides'
 import { isExternalUrl } from '../lib/paths'
 import { enrichSlide, fmtClock, type PresentCtx } from '../lib/slideDom'
 import { portableizeDeck, type PortableDeck } from '../lib/portableDeck'
+import { useRawHtml } from '../lib/rawHtml'
 
 // Re-exported so existing importers (App) keep getting the type from here.
 export type { PresentCtx } from '../lib/slideDom'
@@ -22,7 +23,7 @@ interface Props {
  * Full-window presentation overlay built live from the active markdown. Headings
  * (or `---`) become slides; arrow keys / space / click advance; `Esc` exits.
  *
- * The presenter view (🎤 / `F`) is dual-mode:
+ * The presenter view (mic button / `F`) is dual-mode:
  *   - In Electron it opens a **detached** second window — the main window becomes the
  *     clean audience deck while the other window shows notes, the next slide, and a
  *     timer. Navigation round-trips through the main window, which stays the single
@@ -49,6 +50,14 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
   const safeIndex = Math.min(index, total - 1)
   const current = deck.slides[safeIndex]
   const next = safeIndex + 1 < total ? deck.slides[safeIndex + 1] : null
+
+  // Stable {__html} wrappers — see useRawHtml. The presenter timer re-renders this
+  // component twice a second; inline objects would make React 19 re-set the slides'
+  // innerHTML on every tick, wiping the mermaid / blob-image decorations the
+  // slide-decoration effect painted.
+  const currentBodyHtml = useRawHtml(current.bodyHtml)
+  const currentNotesHtml = useRawHtml(current.hasNotes ? current.notesHtml : '')
+  const nextBodyHtml = useRawHtml(next ? next.bodyHtml : '')
 
   const stageRef = useRef<HTMLElement>(null)
   const nextRef = useRef<HTMLElement>(null)
@@ -336,7 +345,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
               <article
                 ref={stageRef}
                 className="markdown-body slide-body"
-                dangerouslySetInnerHTML={{ __html: current.bodyHtml }}
+                dangerouslySetInnerHTML={currentBodyHtml}
               />
             </div>
           </div>
@@ -351,7 +360,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
               <div className="presenter-label">発表者ノート</div>
               <div
                 className="notes-body markdown-body"
-                dangerouslySetInnerHTML={{ __html: current.hasNotes ? current.notesHtml : '' }}
+                dangerouslySetInnerHTML={currentNotesHtml}
               />
             </div>
             <div className="presenter-next">
@@ -363,7 +372,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
                   <article
                     ref={nextRef}
                     className="markdown-body slide-body"
-                    dangerouslySetInnerHTML={{ __html: next.bodyHtml }}
+                    dangerouslySetInnerHTML={nextBodyHtml}
                   />
                 </div>
               ) : (
@@ -377,7 +386,7 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
           <article
             ref={stageRef}
             className="markdown-body slide-body"
-            dangerouslySetInnerHTML={{ __html: current.bodyHtml }}
+            dangerouslySetInnerHTML={currentBodyHtml}
           />
         </div>
       )}
@@ -411,7 +420,18 @@ export function PresentationView({ markdown, ctx, strategy = 'auto', onExit }: P
           aria-pressed={presenterActive}
           title={canDetach ? '発表者ビューを別ウィンドウで開く (F)' : '発表者ビュー (F)'}
         >
-          🎤 発表者
+          <svg
+            className="nav-btn-svg"
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="currentColor"
+            aria-hidden
+          >
+            {/* Material "mic": monochrome to match the other toolbar icons. */}
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+          </svg>
+          発表者
         </button>
         <button className="present-ctl" onClick={onExit} title="終了 (Esc)">
           ✕ 終了

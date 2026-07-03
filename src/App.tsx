@@ -8,6 +8,7 @@ import { useGitStatus } from './hooks/useGitStatus'
 import { filterTree } from './lib/filterTree'
 import { buildViewableExtensions, isMarkdownPath, matchesViewable } from './lib/extensions'
 import { readTextFile } from './lib/fsAccess'
+import { decodeText } from './lib/encoding'
 import { getFont } from './lib/fonts'
 import { TreeView } from './components/TreeView'
 import { SearchResults } from './components/SearchResults'
@@ -143,10 +144,11 @@ function collectDroppedPaths(dt: DataTransfer): string[] {
 function tabToSource(
   tab: Tab,
   files: Map<string, FileEntry> | undefined,
+  rootAbsPath: string | null,
 ): PreviewSource | null {
   if (tab.source.kind === 'in-root') {
     if (!files) return null
-    return { kind: 'in-root', path: tab.source.path, files }
+    return { kind: 'in-root', path: tab.source.path, files, rootAbsPath }
   }
   return {
     kind: 'external',
@@ -622,7 +624,7 @@ export default function App() {
                 continue
               }
             }
-            const content = await file.text()
+            const content = decodeText(await file.arrayBuffer())
             openExternal(file.name, content, absolutePath)
           } catch (err) {
             console.error('[D&D] failed to read dropped file:', file.name, err)
@@ -683,7 +685,9 @@ export default function App() {
   )
   const showResults = mode === 'content' && trimmed.length > 0
 
-  const activeSource = tabs.active ? tabToSource(tabs.active, dir.scan?.files) : null
+  const activeSource = tabs.active
+    ? tabToSource(tabs.active, dir.scan?.files, effectiveRootAbsPath)
+    : null
   // Path of the active in-root tab, used to highlight the row in the tree / results.
   const activeInRootPath =
     tabs.active?.source.kind === 'in-root' ? tabs.active.source.path : null
@@ -867,6 +871,11 @@ export default function App() {
                 focusMode={focusMode}
                 onToggleFocus={() => setFocusMode((f) => !f)}
                 onPresent={startPresentation}
+                stickyHeadings={settings.stickyHeadings}
+                gitDiff={settings.gitDiffMarkers}
+                onToggleGitDiff={() =>
+                  updateSettings({ gitDiffMarkers: !settings.gitDiffMarkers })
+                }
               />
             ) : dir.status === 'ready' ? (
               <Preview
