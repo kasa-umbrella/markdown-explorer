@@ -1,26 +1,26 @@
 import { useCallback, useMemo, useState } from 'react'
 
-export type TabSource =
-  | { kind: 'in-root'; path: string }
-  | {
-      kind: 'external'
-      name: string
-      content: string
-      /**
-       * Absolute OS path the content was read from, when known (Finder open-with,
-       * VSCode drag-drop, etc.). Enables resolving relative image / link references
-       * inside the markdown — without it we can only show alt-text placeholders.
-       */
-      absolutePath?: string
-    }
+/**
+ * A tab always holds a self-contained, externally-opened file: its content is read
+ * once (via drag-drop or Finder open-with) and kept in state. There's no folder root,
+ * so there's no in-root/relative-path tab kind anymore.
+ */
+export interface TabSource {
+  name: string
+  content: string
+  /**
+   * Absolute OS path the content was read from, when known (Finder open-with,
+   * VSCode drag-drop, etc.). Enables resolving relative image / link references
+   * inside the markdown — without it we can only show alt-text placeholders.
+   */
+  absolutePath?: string
+}
 
 export interface Tab {
   id: string
   source: TabSource
   /** VSCode-style preview state. A single preview tab gets replaced when another file is single-clicked. */
   preview: boolean
-  /** Per-tab back/forward history. Only in-root tabs use it; external tabs keep an empty stack. */
-  history: { stack: string[]; index: number }
 }
 
 interface State {
@@ -29,73 +29,32 @@ interface State {
 }
 
 const INITIAL: State = { tabs: [], activeIndex: -1 }
-const EMPTY_HISTORY = { stack: [] as string[], index: -1 }
 
 let _id = 0
 const makeId = () => `t${++_id}-${Date.now().toString(36)}`
 
 /**
- * Tab list with VSCode-style preview semantics:
- *  - single-click ⇒ open as preview (replaces the existing preview tab, if any)
- *  - double-click ⇒ pin (or open pinned directly)
- *  - link click inside a tab ⇒ navigate within that tab, preserving preview state
+ * Tab list for the viewer. Every tab is an opened file; there's no per-tab
+ * navigation history (that only made sense for in-root relative links).
  */
 export function useTabs() {
   const [state, setState] = useState<State>(INITIAL)
 
   const active = state.activeIndex >= 0 ? state.tabs[state.activeIndex] : null
 
-  const openInRoot = useCallback(
-    (path: string, opts: { pinned?: boolean } = {}) => {
-      setState((prev) => {
-        const existing = prev.tabs.findIndex(
-          (t) => t.source.kind === 'in-root' && t.source.path === path,
-        )
-        if (existing >= 0) {
-          const tabs =
-            opts.pinned && prev.tabs[existing].preview
-              ? prev.tabs.map((t, i) => (i === existing ? { ...t, preview: false } : t))
-              : prev.tabs
-          return { tabs, activeIndex: existing }
-        }
-
-        const newTab: Tab = {
-          id: makeId(),
-          source: { kind: 'in-root', path },
-          preview: !opts.pinned,
-          history: { stack: [path], index: 0 },
-        }
-
-        if (!opts.pinned) {
-          const previewIdx = prev.tabs.findIndex((t) => t.preview)
-          if (previewIdx >= 0) {
-            return {
-              tabs: prev.tabs.map((t, i) => (i === previewIdx ? newTab : t)),
-              activeIndex: previewIdx,
-            }
-          }
-        }
-
-        return { tabs: [...prev.tabs, newTab], activeIndex: prev.tabs.length }
-      })
-    },
-    [],
-  )
-
   const openExternal = useCallback(
     (name: string, content: string, absolutePath?: string): string => {
       const id = makeId()
       setState((prev) => {
+        // Re-focus an already-open tab for the same on-disk file instead of duplicating it.
+        if (absolutePath) {
+          const existing = prev.tabs.findIndex((t) => t.source.absolutePath === absolutePath)
+          if (existing >= 0) return { ...prev, activeIndex: existing }
+        }
         const newTab: Tab = {
           id,
-          source: {
-            kind: 'external',
-            name,
-            content,
-            ...(absolutePath ? { absolutePath } : {}),
-          },
+          source: { name, content, ...(absolutePath ? { absolutePath } : {}) },
           preview: false,
-          history: EMPTY_HISTORY,
         }
         return { tabs: [...prev.tabs, newTab], activeIndex: prev.tabs.length }
       })
@@ -130,18 +89,16 @@ export function useTabs() {
   }, [])
 
   /**
-   * Replace an external tab's content in place, preserving its id, preview state,
-   * and position. Used by the reload flow when the file on disk has been edited
-   * outside the app — without this, external tabs would stay pinned to their
-   * open-time snapshot forever (the content is held in state, not re-read on demand).
-   * Silently no-ops if the tab isn't found or isn't external.
+   * Replace a tab's content in place, preserving its id, preview state, and position.
+   * Used by the reload flow when the file on disk changed outside the app — the
+   * content is held in state, not re-read on demand, so without this a tab would stay
+   * pinned to its open-time snapshot. Silently no-ops if the tab isn't found.
    */
   const updateExternalContent = useCallback((id: string, content: string) => {
     setState((prev) => {
       const idx = prev.tabs.findIndex((t) => t.id === id)
       if (idx < 0) return prev
       const t = prev.tabs[idx]
-      if (t.source.kind !== 'external') return prev
       if (t.source.content === content) return prev
       return {
         ...prev,
@@ -157,8 +114,7 @@ export function useTabs() {
       const i = prev.activeIndex
       if (i < 0) return prev
       const tabs = prev.tabs.filter((_, idx) => idx !== i)
-      const activeIndex =
-        tabs.length === 0 ? -1 : Math.min(i, tabs.length - 1)
+      const activeIndex = tabs.length === 0 ? -1 : Math.min(i, tabs.length - 1)
       return { tabs, activeIndex }
     })
   }, [])
@@ -174,64 +130,6 @@ export function useTabs() {
     setState((prev) =>
       index >= 0 && index < prev.tabs.length ? { ...prev, activeIndex: index } : prev,
     )
-  }, [])
-
-  const navigate = useCallback((path: string) => {
-    setState((prev) => {
-      if (prev.activeIndex < 0) return prev
-      return {
-        ...prev,
-        tabs: prev.tabs.map((t, i) => {
-          if (i !== prev.activeIndex || t.source.kind !== 'in-root') return t
-          if (t.history.stack[t.history.index] === path) return t
-          const nextStack = t.history.stack.slice(0, t.history.index + 1)
-          nextStack.push(path)
-          return {
-            ...t,
-            source: { kind: 'in-root', path },
-            history: { stack: nextStack, index: nextStack.length - 1 },
-          }
-        }),
-      }
-    })
-  }, [])
-
-  const back = useCallback(() => {
-    setState((prev) => {
-      if (prev.activeIndex < 0) return prev
-      return {
-        ...prev,
-        tabs: prev.tabs.map((t, i) => {
-          if (i !== prev.activeIndex || t.source.kind !== 'in-root') return t
-          if (t.history.index <= 0) return t
-          const idx = t.history.index - 1
-          return {
-            ...t,
-            source: { kind: 'in-root', path: t.history.stack[idx] },
-            history: { ...t.history, index: idx },
-          }
-        }),
-      }
-    })
-  }, [])
-
-  const forward = useCallback(() => {
-    setState((prev) => {
-      if (prev.activeIndex < 0) return prev
-      return {
-        ...prev,
-        tabs: prev.tabs.map((t, i) => {
-          if (i !== prev.activeIndex || t.source.kind !== 'in-root') return t
-          if (t.history.index >= t.history.stack.length - 1) return t
-          const idx = t.history.index + 1
-          return {
-            ...t,
-            source: { kind: 'in-root', path: t.history.stack[idx] },
-            history: { ...t.history, index: idx },
-          }
-        }),
-      }
-    })
   }, [])
 
   const nextTab = useCallback(() => {
@@ -253,38 +151,11 @@ export function useTabs() {
 
   const reset = useCallback(() => setState(INITIAL), [])
 
-  // Drop in-root tabs only (their paths are tied to the previous root), keeping
-  // external tabs intact — those carry self-contained content and survive a switch.
-  const clearInRoot = useCallback(() => {
-    setState((prev) => {
-      let nextActive = -1
-      const tabs: Tab[] = []
-      prev.tabs.forEach((t, i) => {
-        if (t.source.kind !== 'in-root') {
-          if (i === prev.activeIndex) nextActive = tabs.length
-          tabs.push(t)
-        }
-      })
-      if (nextActive === -1 && tabs.length > 0) nextActive = 0
-      return { tabs, activeIndex: nextActive }
-    })
-  }, [])
-
-  const canBack =
-    !!active && active.source.kind === 'in-root' && active.history.index > 0
-  const canForward =
-    !!active &&
-    active.source.kind === 'in-root' &&
-    active.history.index < active.history.stack.length - 1
-
   return useMemo(
     () => ({
       tabs: state.tabs,
       activeIndex: state.activeIndex,
       active,
-      canBack,
-      canForward,
-      openInRoot,
       openExternal,
       updateExternalContent,
       close,
@@ -292,21 +163,14 @@ export function useTabs() {
       closeActive,
       pin,
       activate,
-      navigate,
-      back,
-      forward,
       nextTab,
       prevTab,
       reset,
-      clearInRoot,
     }),
     [
       state.tabs,
       state.activeIndex,
       active,
-      canBack,
-      canForward,
-      openInRoot,
       openExternal,
       updateExternalContent,
       close,
@@ -314,13 +178,9 @@ export function useTabs() {
       closeActive,
       pin,
       activate,
-      navigate,
-      back,
-      forward,
       nextTab,
       prevTab,
       reset,
-      clearInRoot,
     ],
   )
 }

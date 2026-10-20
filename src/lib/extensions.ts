@@ -1,6 +1,9 @@
 /** Markdown extensions are always supported; they have special rendering. */
 export const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown', 'mkd'] as const
 
+/** Tabular formats with a dedicated viewer (CSV grid / Excel workbook), always supported. */
+export const TABULAR_EXTENSIONS = ['csv', 'xlsx', 'xlsm', 'xls'] as const
+
 export const MARKDOWN_EXT_RE = /\.(md|markdown|mdown|mkd)$/i
 
 /** Lowercased extension (without the leading dot), or null when the name has no extension. */
@@ -26,9 +29,9 @@ export function matchesViewable(path: string, viewable: ReadonlySet<string>): bo
   return ext !== null && viewable.has(ext)
 }
 
-/** Build the active viewable-extension set (markdown + extras), lowercased. */
+/** Build the active viewable-extension set (markdown + tabular + extras), lowercased. */
 export function buildViewableExtensions(extra: readonly string[]): Set<string> {
-  const set = new Set<string>(MARKDOWN_EXTENSIONS)
+  const set = new Set<string>([...MARKDOWN_EXTENSIONS, ...TABULAR_EXTENSIONS])
   for (const e of extra) {
     const cleaned = e.toLowerCase().replace(/^\./, '').trim()
     if (cleaned) set.add(cleaned)

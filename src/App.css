@@ -1,364 +1,17 @@
 .app {
   display: grid;
-  /* Set min to 0 on both columns and rows so the inner scroll area never exceeds the viewport */
-  grid-template-columns: var(--sidebar-width, 300px) 5px minmax(0, 1fr);
+  /* Single column: the app is a viewer, so the preview pane fills the window. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
 
-/* Focus mode: only the active preview pane is visible. The sidebar, resize
-   handle, tab bar, and settings FAB all step aside; Esc (handled in App.tsx)
-   restores the regular layout. */
-.app.focus {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.app.focus > .sidebar,
-.app.focus > .resize-handle,
+/* Focus mode: only the active preview pane is visible. The tab bar and settings
+   FAB step aside; Esc (handled in App.tsx) restores the regular layout. */
 .app.focus .tab-bar,
 .app.focus > .settings-fab {
   display: none;
-}
-
-.resize-handle {
-  cursor: col-resize;
-  background: transparent;
-  transition: background 120ms ease-out;
-}
-
-.resize-handle:hover {
-  background: var(--accent);
-}
-
-body.resizing {
-  cursor: col-resize;
-  user-select: none;
-}
-
-body.resizing .resize-handle {
-  background: var(--accent);
-}
-
-/* ───────── Sidebar ───────── */
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  /* Set min-height to 0 so the flex child (tree-scroll) can shrink and scroll */
-  min-height: 0;
-  overflow: hidden;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-  /* Show the left pane in a slightly smaller, tighter font than the body */
-  font-size: 15.5px;
-}
-
-.sidebar-head {
-  padding: 12px 10px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.app-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  letter-spacing: 0.02em;
-}
-
-.app-icon {
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  object-fit: cover;
-}
-
-.root-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.root-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.count {
-  flex: none;
-  color: var(--accent);
-}
-
-.toolbar {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.search {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 8px;
-  color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  outline: none;
-}
-
-.search:focus {
-  border-color: var(--accent);
-}
-
-.icon-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  padding: 0;
-  line-height: 1;
-  color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.icon-btn-svg {
-  display: block;
-}
-
-.icon-btn:hover {
-  border-color: var(--accent);
-}
-
-.icon-btn.active {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-/* Search mode switch (name / contents) */
-.mode-toggle {
-  display: flex;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.mode-btn {
-  flex: 1;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.mode-btn:hover {
-  border-color: var(--accent);
-}
-
-.mode-btn.active {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.tree-scroll {
-  flex: 1;
-  overflow: auto;
-  /* Reserve space at the bottom so the floating ⚙ button doesn't sit on top of the last tree row. */
-  padding: 6px 4px 64px;
-}
-
-/* ───────── Content search results ───────── */
-.results {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.result {
-  display: block;
-  width: 100%;
-  padding: 6px 8px;
-  margin-bottom: 2px;
-  color: var(--text);
-  text-align: left;
-  background: none;
-  border: 0;
-  border-radius: 6px;
-}
-
-.result:hover {
-  background: var(--panel-2);
-}
-
-.result.selected {
-  background: var(--selected);
-}
-
-.result-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.result-head .icon {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  color: var(--muted);
-}
-
-.result.selected .result-head .icon {
-  color: var(--accent);
-}
-
-.result-head .label {
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.result-head .badge {
-  flex: none;
-  margin-left: auto;
-  padding: 0 6px;
-  font-size: 11px;
-  color: var(--accent);
-  background: var(--selected);
-  border-radius: 8px;
-}
-
-.result-path {
-  overflow: hidden;
-  margin: 2px 0 4px;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snippets {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.snippets li {
-  display: flex;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.snippets .ln {
-  flex: none;
-  min-width: 2.2em;
-  color: var(--muted);
-  text-align: right;
-}
-
-.snippets .snippet-text {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snippets mark {
-  color: var(--text);
-  background: var(--mark);
-  border-radius: 2px;
-}
-
-.hint {
-  padding: 12px;
-  color: var(--muted);
-}
-
-/* ───────── Tree ───────── */
-.tree {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 8px;
-  color: var(--text);
-  text-align: left;
-  background: none;
-  border: 0;
-  border-radius: 5px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.row .icon {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  color: var(--muted);
-}
-
-.row.file.selected .icon {
-  color: var(--accent);
-}
-
-.row .label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row:hover {
-  background: var(--panel-2);
-}
-
-.row.file.selected {
-  background: var(--selected);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-/* Git-status tint on the file label. Scoped to `:not(.selected)` so the active
- * row keeps the brighter accent color — the status colors are a passive hint,
- * the selection color is the user's focus point. */
-.row.file.git-M:not(.selected) .label {
-  color: var(--git-modified);
-}
-.row.file.git-A:not(.selected) .label {
-  color: var(--git-added);
-}
-.row.file.git-D:not(.selected) .label {
-  color: var(--git-deleted);
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-}
-.row.file.git-R:not(.selected) .label {
-  color: var(--git-renamed);
-}
-.row.file.git-U:not(.selected) .label {
-  color: var(--git-untracked);
 }
 
 /* ── In-document git-diff markers (preview body) ──
@@ -554,42 +207,6 @@ body.resizing .resize-handle {
   align-items: center;
   justify-content: center;
   color: var(--accent);
-}
-
-/* Swipe-back / swipe-forward progress indicator (drag-follow). */
-.swipe-indicator {
-  position: absolute;
-  top: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  font-size: 36px;
-  line-height: 1;
-  color: var(--text);
-  background: var(--panel-overlay);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  box-shadow: 0 4px 14px var(--shadow-md);
-  pointer-events: none;
-  z-index: 10;
-  transition: opacity 80ms ease-out;
-  will-change: transform, opacity;
-}
-
-.swipe-back {
-  left: 16px;
-}
-
-.swipe-forward {
-  right: 16px;
-}
-
-.swipe-indicator.triggered {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--panel-overlay-strong);
 }
 
 .doc-path {
@@ -897,62 +514,6 @@ body.resizing .resize-handle {
   white-space: pre-wrap;
   background: var(--panel);
   border-radius: 8px;
-}
-
-/* ───────── Graph view (link map) ───────── */
-.graph-view {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  background:
-    radial-gradient(circle, var(--grid-dot) 1px, transparent 1px) 0 0 / 18px 18px,
-    var(--bg);
-}
-
-.graph-canvas {
-  width: 100%;
-  height: 100%;
-}
-
-.graph-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 8px;
-  color: var(--muted);
-  pointer-events: none;
-}
-
-.graph-overlay-error {
-  color: var(--danger);
-}
-
-.graph-overlay pre {
-  max-width: 600px;
-  padding: 10px 12px;
-  color: var(--danger);
-  font-size: 12px;
-  text-align: left;
-  white-space: pre-wrap;
-  background: var(--panel);
-  border: 1px solid var(--danger);
-  border-radius: 6px;
-}
-
-.graph-legend {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  padding: 4px 10px;
-  color: var(--muted);
-  font-size: 11px;
-  background: var(--panel-overlay-soft);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  pointer-events: none;
 }
 
 /* ───────── Settings (floating button + modal) ───────── */
@@ -1641,97 +1202,78 @@ body.resizing .resize-handle {
 }
 
 /* ───────── CSV table viewer ───────── */
-.csv-table-wrap {
-  /* Let wide CSVs scroll horizontally inside the preview without dragging the
-     whole document sideways. Keep a generous bottom buffer so the last row's
-     focus ring isn't clipped against the scroll container's edge. */
-  max-width: 100%;
-  overflow: auto;
-  margin: 0 0 24px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
+/* ───────── CSV grid (Glide Data Grid) ─────────
+   <CsvTable> renders CSVs into a <canvas> for Excel-style rectangular
+   drag-selection and Cmd+C range copy. The canvas grid needs a parent with a
+   resolved pixel height, so when a CSV is active `.preview` switches from a
+   scrolling document to a flex column: the doc-path stays pinned at the top and
+   `.csv-grid-wrap` claims the rest, letting the grid manage its own scrolling. */
+.preview--csv {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.csv-table {
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: 14px;
-  width: max-content;
-  min-width: 100%;
+.preview--csv .doc-path {
+  flex: none;
+  position: static;
 }
 
-.csv-table th,
-.csv-table td {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.csv-table th:last-child,
-.csv-table td:last-child {
-  border-right: none;
-}
-
-.csv-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.csv-table thead th {
-  position: sticky;
-  top: 0;
-  background: var(--panel-2);
-  font-weight: 600;
-  z-index: 1;
-}
-
-.csv-table tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--panel) 50%, transparent);
-}
-
-.csv-table tbody tr:hover td {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
-.csv-table tbody tr.csv-row-checked td {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.csv-check-col {
-  width: 36px;
-  text-align: center !important;
-  padding: 6px 8px;
-  background: var(--panel);
-  position: sticky;
-  left: 0;
-  z-index: 2;
-}
-
-.csv-table thead .csv-check-col {
-  /* Header check-col needs to sit above body check-cols (sticky-left) AND above
-     other header cells (sticky-top) when the user scrolls both axes. */
-  z-index: 3;
-  background: var(--panel-2);
-}
-
-.csv-table tbody tr.csv-row-checked .csv-check-col {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
-}
-
-.csv-check {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
+.csv-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
 }
 
 .csv-empty {
   color: var(--muted);
   padding: 16px;
+}
+
+/* Excel workbook: a sheet-tab strip above the reused CSV grid. The view is a flex
+   column so the tabs stay pinned and the grid claims the remaining height. */
+.xlsx-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.sheet-tab {
+  flex: none;
+  max-width: 220px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.sheet-tab:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.sheet-tab.active {
+  color: var(--accent);
+  background: var(--bg);
+  border-color: var(--border);
 }
 
 /* ───────── Presentation / Teleprompter mode ─────────

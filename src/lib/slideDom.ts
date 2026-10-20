@@ -1,22 +1,13 @@
-import {
-  guessMimeFromPath,
-  isExternalUrl,
-  resolveAbsoluteRelative,
-  resolveRelative,
-} from './paths'
-import { readBlobUrl } from './fsAccess'
+import { guessMimeFromPath, isExternalUrl, resolveAbsoluteRelative } from './paths'
 import { renderMermaid } from './mermaid'
-import type { FileEntry } from '../types'
 
 /**
- * What a slide needs to resolve its relative images. Mirrors the two source kinds
- * the Preview understands: an in-root file (resolve via the scan's handle map) or an
- * externally-opened file (resolve via its on-disk path + IPC). The detached presenter
- * window passes images pre-baked as data URLs, so it uses an inert external ctx.
+ * What a slide needs to resolve its relative images: the source file's on-disk path
+ * (images are read via IPC relative to it). Null when the path is unknown. The
+ * detached presenter window passes images pre-baked as data URLs, so it can pass a
+ * null path and rely on those.
  */
-export type PresentCtx =
-  | { kind: 'in-root'; path: string; files: Map<string, FileEntry> }
-  | { kind: 'external'; absolutePath: string | null }
+export type PresentCtx = { absolutePath: string | null }
 
 /**
  * Post-render enrichment for a freshly-injected slide DOM: wrap tables, mark
@@ -51,7 +42,7 @@ export function enrichSlide(
     wrap.appendChild(table)
   }
 
-  // External links open in the browser; in-root links are inert during a deck.
+  // External links open in the browser; local links are inert during a deck.
   for (const a of Array.from(el.querySelectorAll('a'))) {
     if (isExternalUrl(a.getAttribute('href') ?? '')) {
       a.setAttribute('target', '_blank')
@@ -59,26 +50,11 @@ export function enrichSlide(
     }
   }
 
-  // Relative images → Blob URLs.
+  // Relative images → Blob URLs, resolved against the source file's on-disk path.
   for (const img of Array.from(el.querySelectorAll('img'))) {
     const raw = img.getAttribute('src') ?? ''
     if (!raw || isExternalUrl(raw)) continue
-    if (ctx.kind === 'in-root') {
-      const target = resolveRelative(ctx.path, raw)
-      void (async () => {
-        const url = await readBlobUrl(ctx.files, target)
-        if (isCancelled()) {
-          if (url) URL.revokeObjectURL(url)
-          return
-        }
-        if (url) {
-          created.push(url)
-          img.setAttribute('src', url)
-        } else {
-          img.setAttribute('alt', `（画像が見つかりません：${raw}）`)
-        }
-      })()
-    } else if (ctx.absolutePath && api?.readBinaryFileByPath) {
+    if (ctx.absolutePath && api?.readBinaryFileByPath) {
       const targetAbs = resolveAbsoluteRelative(ctx.absolutePath, raw)
       void (async () => {
         try {

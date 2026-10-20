@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { buildDocTextIndex, findMatches } from '../lib/findInDoc'
+import { type CsvSearchHandle } from './CsvTable'
 
 interface Props {
   /**
@@ -14,6 +15,12 @@ interface Props {
    */
   html: string
   csvText: string | null
+  /**
+   * Live search handle for the CSV grid. Present (non-null current) whenever a
+   * CSV is showing; the bar drives it instead of DOM highlighting, since the
+   * grid renders to a <canvas> with no DOM text to walk.
+   */
+  csvSearchRef?: RefObject<CsvSearchHandle | null>
   /** Measured height of the doc-path bar, so the bar and scroll margins clear it. */
   topOffset: number
   /** Bumped by the host on every ⌘F so an already-open bar re-focuses its input. */
@@ -30,11 +37,24 @@ const skipNonContent = (parent: Element) => parent.closest('.doc-path') !== null
  * scoped. Matches are painted with the CSS Custom Highlight API (no DOM
  * mutation), so it coexists with Preview's mermaid / blob-URL post-processing.
  */
-export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, onClose }: Props) {
+export function FindBar({
+  scrollerRef,
+  html,
+  csvText,
+  csvSearchRef,
+  topOffset,
+  focusSignal,
+  onClose,
+}: Props) {
   const [query, setQuery] = useState('')
   const [ranges, setRanges] = useState<Range[]>([])
   const [current, setCurrent] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // CSV mode swaps the DOM-based backend for the grid's imperative search API.
+  const isCsv = csvText !== null
+  const [csvCount, setCsvCount] = useState(0)
+  const matchCount = isCsv ? csvCount : ranges.length
 
   // ⌘F while already open: re-focus and select so the user can retype immediately.
   useEffect(() => {
@@ -46,6 +66,24 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
   // current match is the first one at/after the viewport top (Chrome behavior),
   // so opening find doesn't yank the reader back to the top of the document.
   useEffect(() => {
+    if (isCsv) {
+      // Grid search: ask the handle for a match count and jump to the first hit.
+      // DOM state is cleared so nothing lingers from a previous markdown doc.
+      setRanges([])
+      const handle = csvSearchRef?.current
+      if (!handle) return
+      if (!query) {
+        handle.clear()
+        setCsvCount(0)
+        setCurrent(0)
+        return
+      }
+      const n = handle.search(query)
+      setCsvCount(n)
+      setCurrent(0)
+      if (n > 0) handle.goto(0)
+      return
+    }
     const scroller = scrollerRef.current
     if (!scroller || !query) {
       setRanges([])
@@ -70,6 +108,7 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
   // higher priority so its style wins over the all-matches one. Cleanup removes
   // both registrations, which also covers closing the bar (unmount).
   useEffect(() => {
+    if (isCsv) return
     if (typeof Highlight === 'undefined' || !CSS.highlights) return
     const all = new Highlight()
     for (const r of ranges) all.add(r)
@@ -83,11 +122,20 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
       CSS.highlights.delete('find-match')
       CSS.highlights.delete('find-current')
     }
-  }, [ranges, current])
+  }, [ranges, current, isCsv])
+
+  // CSV mode: move the grid's highlight to the active match (also scrolls it in).
+  // Fires on step (Enter / ⌘G) and after each fresh search.
+  useEffect(() => {
+    if (!isCsv) return
+    const handle = csvSearchRef?.current
+    if (handle && csvCount > 0) handle.goto(current)
+  }, [current, isCsv, csvCount, csvSearchRef])
 
   // Keep the current match in view, clear of the sticky doc-path bar. Skips
   // collapsed ranges (their node got replaced under us, e.g. by a mermaid render).
   useEffect(() => {
+    if (isCsv) return
     const scroller = scrollerRef.current
     const range = ranges[current]
     if (!scroller || !range) return
@@ -101,13 +149,13 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
         top: scroller.scrollTop + (rect.top - sr.top) - scroller.clientHeight * 0.3,
       })
     }
-  }, [ranges, current, scrollerRef, topOffset])
+  }, [ranges, current, scrollerRef, topOffset, isCsv])
 
   const step = useCallback(
     (dir: 1 | -1) => {
-      setCurrent((i) => (ranges.length === 0 ? 0 : (i + dir + ranges.length) % ranges.length))
+      setCurrent((i) => (matchCount === 0 ? 0 : (i + dir + matchCount) % matchCount))
     },
-    [ranges.length],
+    [matchCount],
   )
 
   // Esc anywhere closes the bar; ⌘G / ⌘⇧G step through matches even when the
@@ -134,7 +182,7 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
     }
   }
 
-  const noMatch = query.length > 0 && ranges.length === 0
+  const noMatch = query.length > 0 && matchCount === 0
   return (
     <div
       className={`find-bar${noMatch ? ' no-match' : ''}`}
@@ -154,12 +202,12 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
         spellCheck={false}
       />
       <span className="find-count" aria-live="polite">
-        {query.length === 0 ? '' : ranges.length === 0 ? '0 件' : `${current + 1} / ${ranges.length}`}
+        {query.length === 0 ? '' : matchCount === 0 ? '0 件' : `${current + 1} / ${matchCount}`}
       </span>
       <button
         className="nav-btn"
         onClick={() => step(-1)}
-        disabled={ranges.length === 0}
+        disabled={matchCount === 0}
         title="前の一致へ (Shift+Enter)"
         aria-label="前の一致へ"
       >
@@ -170,7 +218,7 @@ export function FindBar({ scrollerRef, html, csvText, topOffset, focusSignal, on
       <button
         className="nav-btn"
         onClick={() => step(1)}
-        disabled={ranges.length === 0}
+        disabled={matchCount === 0}
         title="次の一致へ (Enter)"
         aria-label="次の一致へ"
       >

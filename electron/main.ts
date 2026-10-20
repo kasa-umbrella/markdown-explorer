@@ -1,7 +1,7 @@
 // The main process is emitted as ESM (.js). Electron's ESM loader can't resolve the
 // named exports of the built-in electron module, so we use createRequire to CJS-require the API.
 import { createRequire } from 'node:module'
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
@@ -10,26 +10,10 @@ import type ElectronModule from 'electron'
 import { decodeText } from '../src/lib/encoding'
 
 const require = createRequire(import.meta.url)
-const { app, BrowserWindow, Menu, ipcMain, protocol, net, session } =
+const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, net, session } =
   require('electron') as typeof ElectronModule
 
 const execFileP = promisify(execFile)
-
-/**
- * Collapse a porcelain v1 two-letter status code into the single tag the sidebar
- * cares about. We surface untracked (`??`) as `U` so the UI can distinguish "new
- * file the user hasn't added yet" from "newly added to the index", but everything
- * else is reduced to its dominant axis. Returns null for codes we don't paint
- * (`!!` ignored, etc.).
- */
-function simplifyStatus(xy: string): 'M' | 'A' | 'D' | 'R' | 'U' | null {
-  if (xy === '??') return 'U'
-  if (xy[0] === 'D' || xy[1] === 'D') return 'D'
-  if (xy[0] === 'A' || xy[1] === 'A') return 'A'
-  if (xy[0] === 'R' || xy[1] === 'R') return 'R'
-  if (xy[0] === 'M' || xy[1] === 'M') return 'M'
-  return null
-}
 
 // Roots as seen from dist-electron/main.js
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -40,10 +24,8 @@ const PRELOAD = path.join(dirname, 'preload.mjs')
 // Dev server URL injected by vite-plugin-electron during dev. undefined in production.
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
-// In production we serve over app:// instead of file://.
-// Marking it standard + secure means:
-//   - a secure context is established, so showDirectoryPicker is available
-//   - the origin is stable, so folder handles saved in idb-keyval can be restored
+// In production we serve over app:// instead of file://. Marking it standard +
+// secure establishes a stable, secure origin for the renderer.
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app',
@@ -81,12 +63,6 @@ function targetWindow(): BrowserWindow | null {
 // on a cold launch, so the handler must be registered at module top, and incoming paths
 // must be queued until the renderer is loaded and ready to receive them.
 const pendingOpenPaths: string[] = []
-/**
- * Same queueing strategy as pendingOpenPaths, but for *folders* — passed via the CLI
- * alias (`mdexp /path/to/dir` → `open -a markdown-explorer --args /path/to/dir`) or
- * via macOS folder-drops once Info.plist declares `public.folder` support.
- */
-const pendingOpenDirs: string[] = []
 
 function flushPending(): void {
   const target = targetWindow()
@@ -95,33 +71,22 @@ function flushPending(): void {
     const p = pendingOpenPaths.shift()!
     target.webContents.send('mdexp:open-file', p)
   }
-  while (pendingOpenDirs.length > 0) {
-    const p = pendingOpenDirs.shift()!
-    target.webContents.send('mdexp:open-dir', p)
-  }
 }
 
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
-  // macOS also fires `open-file` for folder drops onto the dock icon / app bundle,
-  // so we route by stat'ing the path and queueing into the right bucket. We don't
-  // await here because the event handler is sync — the routing finishes by the time
-  // the renderer asks for a flush.
   void routeIncomingPath(filePath)
 })
 
 /**
- * stat the path and decide which queue it belongs to. Silently drops paths that
- * don't exist or can't be reached — there's nothing useful we can show for those.
+ * Queue a file for the renderer. Directories and unreachable paths are dropped —
+ * this is a single-file viewer, so folders have nowhere to go.
  */
 async function routeIncomingPath(p: string): Promise<void> {
   try {
     const s = await stat(p)
-    if (s.isDirectory()) {
-      pendingOpenDirs.push(p)
-    } else {
-      pendingOpenPaths.push(p)
-    }
+    if (s.isDirectory()) return
+    pendingOpenPaths.push(p)
     flushPending()
   } catch {
     // ENOENT etc. — nothing to open.
@@ -291,56 +256,9 @@ function createPresenterWindow(owner: BrowserWindow): void {
   })
 }
 
-/**
- * Recursively walk `absoluteRoot` for the native-mode scan IPC. Returns a flat
- * list of `{ relPath, absPath }` for every file under the root (directories are
- * inferred on the renderer side). Mirrors the FSA walker's exclusions: `.git` is
- * always skipped, and dot-prefixed entries are skipped unless `showHidden`.
- *
- * Errors on individual subtrees (permission denied, broken symlinks, etc.) are
- * swallowed — the same way the FSA path silently drops anything the browser
- * refuses to enumerate.
- */
-async function walkDirectory(
-  absoluteRoot: string,
-  options: { showHidden: boolean },
-): Promise<{ relPath: string; absPath: string }[]> {
-  const entries: { relPath: string; absPath: string }[] = []
-  const normalizedRoot = absoluteRoot.replace(/[/\\]+$/, '')
-
-  async function walk(dirAbs: string, prefix: string): Promise<void> {
-    let children
-    try {
-      children = await readdir(dirAbs, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const child of children) {
-      const name = child.name
-      if (name === '.git') continue
-      if (!options.showHidden && name.startsWith('.')) continue
-      const relPath = prefix ? `${prefix}/${name}` : name
-      const absChild = path.join(dirAbs, name)
-      if (child.isDirectory()) {
-        await walk(absChild, relPath)
-      } else if (child.isFile()) {
-        entries.push({ relPath, absPath: absChild })
-      }
-      // Skip symlinks / sockets / etc. — same posture as the FSA walker, which
-      // only sees `file` and `directory` from the AsyncIterable.
-    }
-  }
-
-  await walk(normalizedRoot, '')
-  return entries
-}
-
 app.whenReady().then(async () => {
-  // The key to making "no-click restore" of the last folder work.
-  // Browsers don't persist File System Access permissions across sessions,
-  // so handle.queryPermission returns 'prompt' on every launch.
-  // Since the renderer is our own trusted content loaded from app://,
-  // we auto-grant only the 'fileSystem' permission to suppress the re-prompt.
+  // The renderer is our own trusted content loaded from app://; auto-grant only the
+  // 'fileSystem' permission so any file access doesn't trigger a prompt.
   const ses = session.defaultSession
   ses.setPermissionCheckHandler((_wc, permission) => permission === 'fileSystem')
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -367,9 +285,24 @@ app.whenReady().then(async () => {
     return decodeText(await readFile(filePath))
   })
 
+  // Show the native open-file dialog and return the chosen absolute paths.
+  // Multi-select is allowed; the renderer opens each result as a tab. `extensions`
+  // (from the renderer's viewable set) drives the file-type filter — empty means all.
+  ipcMain.handle('mdexp:open-file-dialog', async (e, extensions: unknown) => {
+    const sender = BrowserWindow.fromWebContents(e.sender)
+    const exts = Array.isArray(extensions)
+      ? extensions.filter((x): x is string => typeof x === 'string')
+      : []
+    const filters = exts.length > 0 ? [{ name: '表示できるファイル', extensions: exts }] : []
+    const opts = { properties: ['openFile', 'multiSelections'] as const, filters }
+    const res = sender
+      ? await dialog.showOpenDialog(sender, opts)
+      : await dialog.showOpenDialog(opts)
+    return res.canceled ? [] : res.filePaths
+  })
+
   // Read an absolute file path on disk and return its raw bytes.
-  // Used by the renderer to resolve relative image references inside externally-opened
-  // markdown — those files live outside the FSA root, so we can't use the handle map.
+  // Used by the renderer to resolve relative image references inside opened markdown.
   // The returned ArrayBuffer is wrapped into a Blob URL on the renderer side.
   ipcMain.handle('mdexp:read-binary-file', async (_e, filePath: unknown) => {
     if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
@@ -380,29 +313,6 @@ app.whenReady().then(async () => {
     // across the IPC boundary.
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
   })
-
-  // Recursive walk for native-mode scans (CLI alias / open-folder entry points).
-  // The renderer turns the flat result into the tree shape the sidebar expects.
-  ipcMain.handle(
-    'mdexp:scan-dir-by-path',
-    async (_e, rawPath: unknown, rawOptions: unknown) => {
-      if (typeof rawPath !== 'string' || !path.isAbsolute(rawPath)) {
-        throw new Error('expected an absolute directory path')
-      }
-      const showHidden =
-        typeof rawOptions === 'object' &&
-        rawOptions !== null &&
-        'showHidden' in rawOptions &&
-        Boolean((rawOptions as { showHidden?: unknown }).showHidden)
-      try {
-        const s = await stat(rawPath)
-        if (!s.isDirectory()) throw new Error('path is not a directory')
-      } catch (err) {
-        throw new Error(`cannot read directory: ${String(err)}`, { cause: err })
-      }
-      return walkDirectory(rawPath, { showHidden })
-    },
-  )
 
   // Window-level settings driven by the renderer's settings UI. Each handler acts
   // on the window that sent the message, so every explorer window is independent.
@@ -450,72 +360,6 @@ app.whenReady().then(async () => {
   ipcMain.on('mdexp:to-main', (_e, msg: unknown) => {
     if (presenterOwner && !presenterOwner.isDestroyed()) {
       presenterOwner.webContents.send('mdexp:main-msg', msg)
-    }
-  })
-
-  // Porcelain git status for the active root, returned as `{ path → status }`.
-  //
-  // We run `git -C <root> status --porcelain=v1 -z -uall -- .` so:
-  //   - paths are relative to <root> (not the repo's toplevel — important when the
-  //     active root is a sub-directory of a larger repo);
-  //   - `-z` + NUL terminators keep filenames with newlines / quotes intact;
-  //   - `-uall` expands untracked directories into individual file entries
-  //     (without it, untracked sub-trees show as `dir/` and never match a tree path);
-  //   - `-- .` limits scope to files under <root> so sibling changes elsewhere in
-  //     the repo don't pollute the sidebar;
-  //   - `core.quotepath=false` makes non-ASCII paths roundtrip as raw UTF-8.
-  //
-  // The two-letter XY code is collapsed into a single character: M / A / D / R / U
-  // (untracked). Returns `null` when <root> isn't inside a git repository or git
-  // isn't available, so the renderer can degrade gracefully.
-  ipcMain.handle('mdexp:git-status', async (_e, rootPath: unknown) => {
-    if (typeof rootPath !== 'string' || !path.isAbsolute(rootPath)) {
-      throw new Error('expected an absolute directory path')
-    }
-    try {
-      await execFileP('git', ['-C', rootPath, 'rev-parse', '--is-inside-work-tree'])
-    } catch {
-      return null
-    }
-    try {
-      const { stdout } = await execFileP(
-        'git',
-        [
-          '-c',
-          'core.quotepath=false',
-          '-C',
-          rootPath,
-          'status',
-          '--porcelain=v1',
-          '-z',
-          '-uall',
-          '--',
-          '.',
-        ],
-        { maxBuffer: 32 * 1024 * 1024 },
-      )
-      const result: Record<string, 'M' | 'A' | 'D' | 'R' | 'U'> = {}
-      // -z output is a stream of NUL-terminated fields. Most records are one field
-      // ("XY <path>"), but R/C records are followed by a second NUL-terminated field
-      // holding the original path — we want to advance past it so it isn't parsed
-      // as a fresh status entry.
-      const fields = stdout.split('\0')
-      for (let i = 0; i < fields.length; i++) {
-        const field = fields[i]
-        if (!field) continue
-        if (field.length < 3) continue
-        const xy = field.slice(0, 2)
-        const relPath = field.slice(3)
-        const isRenameOrCopy = xy[0] === 'R' || xy[0] === 'C'
-        if (isRenameOrCopy) i++ // skip the "from" path that follows
-        if (relPath.startsWith('..')) continue // outside <root>; shouldn't happen with `-- .`, but be defensive
-        const code = simplifyStatus(xy)
-        if (code) result[relPath] = code
-      }
-      return result
-    } catch (err) {
-      console.error('[git-status] failed:', err)
-      return null
     }
   })
 

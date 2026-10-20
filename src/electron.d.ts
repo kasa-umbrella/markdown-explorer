@@ -9,26 +9,17 @@ interface MdexpApi {
    */
   readBinaryFileByPath(path: string): Promise<ArrayBuffer>
   /**
+   * Show the native open-file dialog (multi-select). `extensions` filters the
+   * picker to the viewable set. Resolves to the chosen absolute paths, or an
+   * empty array when the user cancels.
+   */
+  openFileDialog(extensions: string[]): Promise<string[]>
+  /**
    * Subscribe to "open with this app" requests dispatched by macOS Finder
    * (via app.on('open-file') in the main process). The handler receives an
    * absolute filesystem path. Returns an unsubscribe function.
    */
   onOpenFile(handler: (path: string) => void): () => void
-  /**
-   * Subscribe to "open this folder" requests from the CLI alias
-   * (`mdexp /path/to/dir`) or macOS folder drops. The handler receives an
-   * absolute directory path. Returns an unsubscribe function.
-   */
-  onOpenDir(handler: (path: string) => void): () => void
-  /**
-   * Native-mode directory walk. Main process recursively enumerates files under
-   * `absPath` (skipping `.git`, and dotfiles when `showHidden` is false) and
-   * returns one entry per file. The renderer builds the tree on its side.
-   */
-  scanDirByPath(
-    absPath: string,
-    options: { showHidden?: boolean },
-  ): Promise<{ relPath: string; absPath: string }[]>
   /** Set the BrowserWindow opacity. Range is clamped to [0.2, 1.0] in the main process. */
   setWindowOpacity(opacity: number): void
   /** Toggle BrowserWindow.setAlwaysOnTop. */
@@ -57,13 +48,6 @@ interface MdexpApi {
    */
   getPathForFile(file: File): string
   /**
-   * Snapshot of git status under the given absolute root path, returned as
-   * `{ relativePath → statusCode }`. Status codes are collapsed:
-   *   M (modified), A (added/staged), D (deleted), R (renamed), U (untracked).
-   * Resolves to null when the root is outside any git repo or git is unavailable.
-   */
-  gitStatus(absoluteRootPath: string): Promise<Record<string, MdexpGitStatusCode> | null>
-  /**
    * The committed (HEAD) contents of a single file, so the preview can mark which
    * blocks changed since the last commit. Resolves to:
    *   - null              → the file isn't inside a git repo (or git is unavailable)
@@ -86,9 +70,6 @@ interface MdexpApi {
   /** Main window: subscribe to the presenter window being closed by the user. */
   onPresenterClosed(handler: () => void): () => void
 }
-
-/** Single-letter status surface for the sidebar. See `MdexpApi.gitStatus`. */
-type MdexpGitStatusCode = 'M' | 'A' | 'D' | 'R' | 'U'
 
 interface Window {
   mdexp?: MdexpApi

@@ -34,15 +34,10 @@ export interface Settings {
   /** Color scheme preference. See {@link ThemePref}. */
   theme: ThemePref
   /**
-   * Additional file extensions (without the leading dot, lowercase) to show in the tree and
-   * render as syntax-highlighted code. Markdown extensions are always supported on top of this.
+   * Additional file extensions (without the leading dot, lowercase) that can be opened and
+   * rendered as syntax-highlighted code. Markdown extensions are always supported on top of this.
    */
   extraExtensions: string[]
-  /**
-   * Show entries whose name begins with a dot (e.g. `.claude/`, `.github/`).
-   * Off by default — these are usually tool config / VCS state and only clutter the tree.
-   */
-  showHidden: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -57,7 +52,6 @@ export const DEFAULT_SETTINGS: Settings = {
   gitDiffMarkers: true,
   theme: 'system',
   extraExtensions: ['yaml', 'yml', 'json', 'csv'],
-  showHidden: false,
 }
 
 export const SETTINGS_RANGES = {
@@ -115,7 +109,6 @@ function sanitize(raw: unknown): Settings {
       r.gitDiffMarkers === undefined ? DEFAULT_SETTINGS.gitDiffMarkers : Boolean(r.gitDiffMarkers),
     theme: sanitizeTheme(r.theme),
     extraExtensions: sanitizeExtensions(r.extraExtensions),
-    showHidden: Boolean(r.showHidden),
   }
 }
 

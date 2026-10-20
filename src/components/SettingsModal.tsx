@@ -136,17 +136,8 @@ export function SettingsModal({ settings, onUpdate, onReset, onClose }: Props) {
             onChange={(next) => onUpdate({ extraExtensions: next })}
           />
           <p className="settings-help">
-            .md などの Markdown は常に表示されます。ここで追加した拡張子のファイルは
+            .md などの Markdown は常に開けます。ここで追加した拡張子のファイルは
             シンタックスハイライト付きでプレビューされます。
-          </p>
-          <Toggle
-            label="隠しファイル / フォルダを表示"
-            checked={settings.showHidden}
-            onChange={(checked) => onUpdate({ showHidden: checked })}
-          />
-          <p className="settings-help">
-            「.」始まりの項目（.claude / .github など）をツリーに表示します。
-            .git だけは大量のオブジェクトを抱えるため常に除外されます。
           </p>
         </section>
 

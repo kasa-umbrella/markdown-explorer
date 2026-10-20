@@ -1,12 +1,6 @@
 import type { Deck } from './slides'
 import type { PresentCtx } from './slideDom'
-import { readBlobUrl } from './fsAccess'
-import {
-  guessMimeFromPath,
-  isExternalUrl,
-  resolveAbsoluteRelative,
-  resolveRelative,
-} from './paths'
+import { guessMimeFromPath, isExternalUrl, resolveAbsoluteRelative } from './paths'
 
 /**
  * A deck whose slide HTML is fully self-contained: every relative image has been
@@ -33,18 +27,6 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 async function resolveImageToDataUrl(raw: string, ctx: PresentCtx): Promise<string | null> {
-  if (ctx.kind === 'in-root') {
-    const blobUrl = await readBlobUrl(ctx.files, resolveRelative(ctx.path, raw))
-    if (!blobUrl) return null
-    try {
-      const blob = await (await fetch(blobUrl)).blob()
-      return await blobToDataUrl(blob)
-    } catch {
-      return null
-    } finally {
-      URL.revokeObjectURL(blobUrl)
-    }
-  }
   const api = window.mdexp
   if (!ctx.absolutePath || !api?.readBinaryFileByPath) return null
   try {

@@ -1,4 +1,24 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import {
+  CompactSelection,
+  DataEditor,
+  GridCellKind,
+  type DataEditorRef,
+  type GridCell,
+  type GridColumn,
+  type GridSelection,
+  type Highlight,
+  type Item,
+  type Theme,
+} from '@glideapps/glide-data-grid'
 import { maxColumnCount, parseCsv } from '../lib/csv'
 
 interface Props {
@@ -6,15 +26,29 @@ interface Props {
   source: string
   /**
    * Stable key used to persist the per-row checkbox state. Typically the file's
-   * in-root path or its absolute OS path. When null/empty, the table still works
-   * but check state is in-memory only.
+   * absolute OS path or basename. When null/empty, the table still works but check
+   * state is in-memory only.
    */
   storageKey: string | null
   /**
-   * Treat the first row as a header. Header cells get a sticky-top style and the
-   * "select all" master checkbox sits in its row instead of an extra one.
+   * Treat the first row as a header. The header cells become the grid's column
+   * titles; every data row below is selectable via its row-marker checkbox.
    */
   hasHeader?: boolean
+}
+
+/**
+ * Imperative search API exposed to the FindBar. Since the grid renders to a
+ * <canvas> (no DOM text to walk), ⌘F drives it through these methods instead of
+ * the CSS Custom Highlight API used for markdown.
+ */
+export interface CsvSearchHandle {
+  /** Run a case-insensitive search over every cell; returns the match count. */
+  search: (query: string) => number
+  /** Focus match `index` (0-based): emphasise it and scroll it into view. */
+  goto: (index: number) => void
+  /** Drop all search highlights. */
+  clear: () => void
 }
 
 const STORAGE_PREFIX = 'csv-checks:'
@@ -46,150 +80,275 @@ function persistChecked(storageKey: string | null, checked: Set<number>): void {
     if (checked.size === 0) {
       localStorage.removeItem(STORAGE_PREFIX + storageKey)
     } else {
-      localStorage.setItem(STORAGE_PREFIX + storageKey, JSON.stringify([...checked].sort((a, b) => a - b)))
+      localStorage.setItem(
+        STORAGE_PREFIX + storageKey,
+        JSON.stringify([...checked].sort((a, b) => a - b)),
+      )
     }
   } catch {
     // quota / private mode — fall through, state stays in-memory.
   }
 }
 
-export function CsvTable({ source, storageKey, hasHeader = true }: Props) {
+/** Build a CompactSelection (Glide's row-selection type) from a set of indices. */
+function rowsFromSet(set: Set<number>): CompactSelection {
+  let sel = CompactSelection.empty()
+  for (const i of set) sel = sel.add(i)
+  return sel
+}
+
+/**
+ * Convert `#rrggbb` (or `#rgb`) to an `rgba()` string with the given alpha.
+ * Canvas fill styles parse rgba() everywhere, whereas `color-mix()` support is
+ * engine-dependent — so we pre-mix here to keep selection tints reliable.
+ */
+function withAlpha(hex: string, alpha: number): string {
+  const h = hex.trim().replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  if (full.length !== 6) return hex
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/** Read the app's live CSS custom properties into a Glide theme override. */
+function readTheme(): Partial<Theme> {
+  const s = getComputedStyle(document.documentElement)
+  const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback
+  const bg = v('--bg', '#ffffff')
+  const panel = v('--panel', '#f7f8fa')
+  const panel2 = v('--panel-2', '#eef0f4')
+  const border = v('--border', '#e2e5ea')
+  const text = v('--text', '#1f2328')
+  const muted = v('--muted', '#6b7280')
+  const accent = v('--accent', '#2f6feb')
+  return {
+    accentColor: accent,
+    accentFg: '#ffffff',
+    accentLight: withAlpha(accent, 0.18),
+    textDark: text,
+    textMedium: muted,
+    textLight: muted,
+    textBubble: text,
+    textHeader: text,
+    textHeaderSelected: accent,
+    bgIconHeader: muted,
+    fgIconHeader: bg,
+    bgCell: bg,
+    bgCellMedium: panel,
+    bgHeader: panel2,
+    bgHeaderHasFocus: panel2,
+    bgHeaderHovered: panel,
+    bgBubble: panel2,
+    bgBubbleSelected: accent,
+    bgSearchResult: withAlpha(accent, 0.2),
+    borderColor: border,
+    horizontalBorderColor: border,
+    drilldownBorder: border,
+    linkColor: accent,
+  }
+}
+
+/** Keep the grid theme in sync with the app's light/dark palette. */
+function useGridTheme(): Partial<Theme> {
+  const [theme, setTheme] = useState<Partial<Theme>>(readTheme)
+  useEffect(() => {
+    const obs = new MutationObserver(() => setTheme(readTheme()))
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => obs.disconnect()
+  }, [])
+  return theme
+}
+
+/** Cap on search matches, mirroring the DOM find path in findInDoc.ts. */
+const SEARCH_LIMIT = 5000
+
+export const CsvTable = forwardRef<CsvSearchHandle, Props>(function CsvTable(
+  { source, storageKey, hasHeader = true },
+  ref,
+) {
   const rows = useMemo(() => parseCsv(source), [source])
   const colCount = useMemo(() => maxColumnCount(rows), [rows])
 
-  // Header row (row 0) is not selectable; data rows start at offset 0 in the body.
+  // Row 0 supplies the column titles when hasHeader; the remaining rows are the
+  // selectable data body. Row indices below are relative to `bodyRows`, matching
+  // the persisted checkbox semantics of the previous HTML-table renderer.
   const headerRow = hasHeader && rows.length > 0 ? rows[0] : null
-  const bodyRows = headerRow ? rows.slice(1) : rows
+  const bodyRows = useMemo(() => (headerRow ? rows.slice(1) : rows), [rows, headerRow])
 
-  // Persisted checkbox state, keyed by the row's index within `bodyRows`.
-  const [checked, setChecked] = useState<Set<number>>(() => loadChecked(storageKey))
+  const theme = useGridTheme()
+  const gridRef = useRef<DataEditorRef>(null)
 
-  // Re-hydrate when the storageKey (i.e. the active file) changes. Without this,
-  // switching tabs to a different CSV would carry over the previous file's checks
-  // until the user toggled something.
-  const lastKey = useRef(storageKey)
+  // Estimate a comfortable starting width per column from its content, capped so
+  // one long cell can't blow the column out. Users can still drag to resize.
+  const estimatedWidths = useMemo(() => {
+    const sample = Math.min(bodyRows.length, 100)
+    return Array.from({ length: colCount }, (_, c) => {
+      let maxLen = (headerRow?.[c] ?? '').length
+      for (let r = 0; r < sample; r++) {
+        const len = (bodyRows[r]?.[c] ?? '').length
+        if (len > maxLen) maxLen = len
+      }
+      return Math.max(80, Math.min(360, maxLen * 8 + 36))
+    })
+  }, [bodyRows, colCount, headerRow])
+
+  // User-overridden widths from drag-resizing, keyed by column index.
+  const [colWidths, setColWidths] = useState<Record<number, number>>({})
+
+  const columns = useMemo<GridColumn[]>(
+    () =>
+      Array.from({ length: colCount }, (_, ci) => ({
+        title: headerRow?.[ci]?.trim() || `列${ci + 1}`,
+        id: String(ci),
+        width: colWidths[ci] ?? estimatedWidths[ci] ?? 120,
+      })),
+    [colCount, headerRow, colWidths, estimatedWidths],
+  )
+
+  const getCellContent = useCallback(
+    (cell: Item): GridCell => {
+      const [col, row] = cell
+      const value = bodyRows[row]?.[col] ?? ''
+      return {
+        kind: GridCellKind.Text,
+        data: value,
+        displayData: value,
+        allowOverlay: true,
+        readonly: true,
+        allowWrapping: false,
+      }
+    },
+    [bodyRows],
+  )
+
+  const onColumnResize = useCallback((_col: GridColumn, newSize: number, colIndex: number) => {
+    setColWidths((prev) => ({ ...prev, [colIndex]: newSize }))
+  }, [])
+
+  // Selection state. `rows` holds the persisted row-marker checkboxes; `current`
+  // holds the transient cell range the user drag-selects for copying.
+  const [selection, setSelection] = useState<GridSelection>(() => ({
+    columns: CompactSelection.empty(),
+    rows: rowsFromSet(loadChecked(storageKey)),
+  }))
+
+  // Re-hydrate checkbox state when the active file changes so one CSV's checks
+  // don't bleed into the next.
   useEffect(() => {
-    if (lastKey.current === storageKey) return
-    lastKey.current = storageKey
-    setChecked(loadChecked(storageKey))
+    setSelection({ columns: CompactSelection.empty(), rows: rowsFromSet(loadChecked(storageKey)) })
   }, [storageKey])
 
-  const toggleRow = useCallback(
-    (idx: number) => {
-      setChecked((prev) => {
-        const next = new Set(prev)
-        if (next.has(idx)) next.delete(idx)
-        else next.add(idx)
-        persistChecked(storageKey, next)
-        return next
-      })
+  const onGridSelectionChange = useCallback(
+    (next: GridSelection) => {
+      setSelection(next)
+      persistChecked(storageKey, new Set(next.rows.toArray()))
     },
     [storageKey],
   )
 
-  const allChecked = bodyRows.length > 0 && checked.size === bodyRows.length
-  const someChecked = checked.size > 0 && !allChecked
+  // ── Search (driven by FindBar) ──
+  // `matches` feeds the highlight overlay; `matchesRef` lets goto() read the
+  // latest list without a stale closure. Both reset when the file changes.
+  const [matches, setMatches] = useState<Item[]>([])
+  const [currentMatch, setCurrentMatch] = useState(0)
+  const matchesRef = useRef<Item[]>([])
 
-  const toggleAll = useCallback(() => {
-    setChecked((prev) => {
-      const next: Set<number> =
-        prev.size === bodyRows.length ? new Set() : new Set(bodyRows.map((_, i) => i))
-      persistChecked(storageKey, next)
-      return next
-    })
-  }, [bodyRows.length, storageKey])
+  useEffect(() => {
+    setColWidths({})
+    setMatches([])
+    matchesRef.current = []
+    setCurrentMatch(0)
+  }, [source])
+
+  useImperativeHandle(
+    ref,
+    (): CsvSearchHandle => ({
+      search(query) {
+        const q = query.trim().toLowerCase()
+        if (!q) {
+          matchesRef.current = []
+          setMatches([])
+          setCurrentMatch(0)
+          return 0
+        }
+        const found: Item[] = []
+        outer: for (let r = 0; r < bodyRows.length; r++) {
+          const row = bodyRows[r]
+          for (let c = 0; c < colCount; c++) {
+            const cell = row[c]
+            if (cell && cell.toLowerCase().includes(q)) {
+              found.push([c, r] as Item)
+              if (found.length >= SEARCH_LIMIT) break outer
+            }
+          }
+        }
+        matchesRef.current = found
+        setMatches(found)
+        setCurrentMatch(0)
+        return found.length
+      },
+      goto(index) {
+        const m = matchesRef.current
+        if (index < 0 || index >= m.length) return
+        setCurrentMatch(index)
+        const [col, row] = m[index]
+        gridRef.current?.scrollTo(col, row, 'both', 0, 0, { hAlign: 'center', vAlign: 'center' })
+      },
+      clear() {
+        matchesRef.current = []
+        setMatches([])
+        setCurrentMatch(0)
+      },
+    }),
+    [bodyRows, colCount],
+  )
+
+  const accent = theme.accentColor ?? '#2f6feb'
+  const highlightRegions = useMemo<readonly Highlight[] | undefined>(() => {
+    if (matches.length === 0) return undefined
+    const regions: Highlight[] = matches.map((m) => ({
+      color: withAlpha(accent, 0.16),
+      range: { x: m[0], y: m[1], width: 1, height: 1 },
+      style: 'no-outline',
+    }))
+    const cur = matches[currentMatch]
+    if (cur) {
+      // Drawn last so the active match's outline sits on top of the plain fills.
+      regions.push({
+        color: withAlpha(accent, 0.32),
+        range: { x: cur[0], y: cur[1], width: 1, height: 1 },
+        style: 'solid-outline',
+      })
+    }
+    return regions
+  }, [matches, currentMatch, accent])
 
   if (rows.length === 0) {
     return <div className="csv-empty">空のCSVです。</div>
   }
 
   return (
-    <div className="csv-table-wrap">
-      <table className="csv-table">
-        {headerRow && (
-          <thead>
-            <tr>
-              <th className="csv-check-col">
-                <CheckCell
-                  checked={allChecked}
-                  indeterminate={someChecked}
-                  onChange={toggleAll}
-                  ariaLabel="すべて選択"
-                />
-              </th>
-              {Array.from({ length: colCount }, (_, ci) => (
-                <th key={ci}>{headerRow[ci] ?? ''}</th>
-              ))}
-            </tr>
-          </thead>
-        )}
-        <tbody>
-          {bodyRows.map((row, ri) => (
-            <BodyRow
-              key={ri}
-              rowIndex={ri}
-              row={row}
-              colCount={colCount}
-              isChecked={checked.has(ri)}
-              onToggle={toggleRow}
-            />
-          ))}
-        </tbody>
-      </table>
+    <div className="csv-grid-wrap">
+      <DataEditor
+        ref={gridRef}
+        columns={columns}
+        rows={bodyRows.length}
+        getCellContent={getCellContent}
+        getCellsForSelection={true}
+        rowMarkers="checkbox"
+        gridSelection={selection}
+        onGridSelectionChange={onGridSelectionChange}
+        onColumnResize={onColumnResize}
+        highlightRegions={highlightRegions}
+        rangeSelect="rect"
+        columnSelect="multi"
+        rowSelect="multi"
+        smoothScrollX
+        smoothScrollY
+        theme={theme}
+      />
     </div>
   )
-}
-
-interface BodyRowProps {
-  rowIndex: number
-  row: readonly string[]
-  colCount: number
-  isChecked: boolean
-  onToggle: (idx: number) => void
-}
-
-/**
- * Memoised row. Only re-renders when its own checkbox flips or the underlying
- * row content changes — important for keeping 1000-row tables responsive when
- * a single check toggles.
- */
-const BodyRow = memo(function BodyRow({ rowIndex, row, colCount, isChecked, onToggle }: BodyRowProps) {
-  return (
-    <tr className={isChecked ? 'csv-row-checked' : undefined}>
-      <td className="csv-check-col">
-        <CheckCell
-          checked={isChecked}
-          onChange={() => onToggle(rowIndex)}
-          ariaLabel={`行 ${rowIndex + 1} を選択`}
-        />
-      </td>
-      {Array.from({ length: colCount }, (_, ci) => (
-        <td key={ci}>{row[ci] ?? ''}</td>
-      ))}
-    </tr>
-  )
 })
-
-interface CheckCellProps {
-  checked: boolean
-  indeterminate?: boolean
-  onChange: () => void
-  ariaLabel: string
-}
-
-function CheckCell({ checked, indeterminate = false, onChange, ariaLabel }: CheckCellProps) {
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate && !checked
-  }, [indeterminate, checked])
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className="csv-check"
-      checked={checked}
-      onChange={onChange}
-      aria-label={ariaLabel}
-    />
-  )
-}

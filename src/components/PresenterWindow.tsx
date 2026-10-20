@@ -26,7 +26,7 @@ type IncomingMessage = DeckMessage | IndexMessage
 
 // Images are already inlined as data URLs, so enrichSlide only needs to wrap tables
 // and render mermaid — no filesystem context required.
-const INERT_CTX: PresentCtx = { kind: 'external', absolutePath: null }
+const INERT_CTX: PresentCtx = { absolutePath: null }
 
 export function PresenterWindow() {
   const [slides, setSlides] = useState<PortableSlide[]>([])

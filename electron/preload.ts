@@ -20,6 +20,15 @@ async function readBinaryFileByPath(path: string): Promise<ArrayBuffer> {
   return ipcRenderer.invoke('mdexp:read-binary-file', path)
 }
 
+/**
+ * Show the native open-file dialog (multi-select). `extensions` filters the picker
+ * to the renderer's viewable set. Resolves to the chosen absolute paths, or an
+ * empty array when the user cancels.
+ */
+async function openFileDialog(extensions: string[]): Promise<string[]> {
+  return ipcRenderer.invoke('mdexp:open-file-dialog', extensions)
+}
+
 // Open-file delivery. Main can flush queued paths before React has had a chance
 // to subscribe, so we buffer here and replay to the first handler that registers.
 let pendingOpens: string[] = []
@@ -43,45 +52,6 @@ function onOpenFile(handler: (path: string) => void): () => void {
   return () => {
     openFileHandlers.delete(handler)
   }
-}
-
-// Open-directory delivery (CLI alias / folder drop). Same buffer-and-replay pattern
-// as onOpenFile, but on a separate channel so the renderer can route folders into
-// the directory-load flow instead of the per-file open flow.
-let pendingOpenDirs: string[] = []
-const openDirHandlers = new Set<(path: string) => void>()
-
-ipcRenderer.on('mdexp:open-dir', (_event, dirPath: string) => {
-  if (openDirHandlers.size === 0) {
-    pendingOpenDirs.push(dirPath)
-    return
-  }
-  for (const handler of openDirHandlers) handler(dirPath)
-})
-
-function onOpenDir(handler: (path: string) => void): () => void {
-  openDirHandlers.add(handler)
-  if (pendingOpenDirs.length > 0) {
-    const drained = pendingOpenDirs
-    pendingOpenDirs = []
-    for (const p of drained) handler(p)
-  }
-  return () => {
-    openDirHandlers.delete(handler)
-  }
-}
-
-/**
- * Native-mode directory walk: ask main to enumerate every file under `absPath`
- * and return a flat list of `{ relPath, absPath }`. Honors the same `showHidden`
- * semantics as the FSA walker (dotfiles excluded by default; `.git` always
- * excluded). The renderer turns this into the sidebar tree.
- */
-async function scanDirByPath(
-  absPath: string,
-  options: { showHidden?: boolean },
-): Promise<{ relPath: string; absPath: string }[]> {
-  return ipcRenderer.invoke('mdexp:scan-dir-by-path', absPath, options)
 }
 
 function setWindowOpacity(opacity: number): void {
@@ -137,19 +107,6 @@ function newWindow(): void {
  */
 function getPathForFile(file: File): string {
   return webUtils.getPathForFile(file)
-}
-
-type GitStatusCode = 'M' | 'A' | 'D' | 'R' | 'U'
-
-/**
- * Snapshot of the git working tree under the given root. Maps each changed file's
- * path (relative to the root) to a single status letter. Resolves to null when the
- * root isn't inside a git repository or git isn't available.
- */
-async function gitStatus(
-  absoluteRootPath: string,
-): Promise<Record<string, GitStatusCode> | null> {
-  return ipcRenderer.invoke('mdexp:git-status', absoluteRootPath)
 }
 
 /**
@@ -230,9 +187,8 @@ function onPresenterClosed(handler: () => void): () => void {
 contextBridge.exposeInMainWorld('mdexp', {
   readTextFileByPath,
   readBinaryFileByPath,
+  openFileDialog,
   onOpenFile,
-  onOpenDir,
-  scanDirByPath,
   setWindowOpacity,
   setAlwaysOnTop,
   onCloseActiveTab,
@@ -240,7 +196,6 @@ contextBridge.exposeInMainWorld('mdexp', {
   closeWindow,
   newWindow,
   getPathForFile,
-  gitStatus,
   gitFileDiff,
   presenterOpen,
   presenterClose,
